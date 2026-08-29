@@ -8,11 +8,11 @@ first; nothing important lives only in a chat log.
 **Branch and deploy.** Work on `claude/create-claude-md-p5kzrk`. It is the
 repo's default branch and GitHub Pages deploys straight from it, so a push is a
 deploy — there is no PR, no merge, no staging. Bump `CACHE` in `sw.js` on every
-change (`vault-defense-v5` → `-v6`), or phones with the game installed keep
+change (`vault-defense-v6` → `-v7`), or phones with the game installed keep
 serving the old build from cache. After a deploy the phone needs two reloads:
 the first fetches, the second swaps the new cache in.
 
-**Tests.** `node test/run.mjs`. 64 checks, all passing as of the sprite pass.
+**Tests.** `node test/run.mjs`. 77 checks, all passing as of the UI pass.
 It boots the real page in headless Chromium, so it catches things unit tests
 would not. It needs no install: Playwright is installed globally in the dev
 container and the script resolves it via `npm root -g`, which keeps the repo at
@@ -20,7 +20,9 @@ zero dependencies. Run it before every push.
 
 **State of play.** The game is feature-complete for a first pass: waves,
 three tower types, free placement by drag, global upgrades, bosses, prestige,
-offline income, save migration, sound, procedural music, pause and speed.
+offline income, save migration, sound, procedural music, pause and speed. The
+UI is card-based: every buyable thing shows the sprite it will put on the map,
+and the header shows the wave's enemies with their hp for this wave.
 
 **Nothing is balanced.** Every number in `balance.js` is a first guess. The
 owner plays and reports; do not tune the curve speculatively between reports.
@@ -72,6 +74,17 @@ each keep a separate save.
   those rules must never delete someone's towers.
 - Sprites are baked once into offscreen canvases at boot and blitted. Layers
   that move independently (hull vs ring, base vs head) are baked separately.
+- `sprites.js` owns that baking so both the canvas (`render.js`) and the DOM
+  (`icons.js`) draw from one source. A tower card shows the same art as the
+  tower it builds, because it *is* the same art, composited into a data URL and
+  handed to CSS as a background image.
+- Abstract UI marks (credit chip, bolt, crosshair) are inline SVG built in
+  `icons.js`, not sprites and not files. They inherit `currentColor`.
+- `ui.js` builds each tab once and then syncs it: values register updater
+  closures, and one pass per frame (~0.1 ms) writes only what changed. Nothing
+  in the panel is destroyed while you are touching it.
+- Wave, count, roster and enemy hp live in the DOM header. The canvas draws the
+  field only — no HUD text, so nothing is stated twice.
 - Cosmetic events (`shot`, `kill`, `leak`) are only emitted when
   `api.cosmetics` is true, so a fast-forward doesn't generate millions of them.
 
@@ -81,9 +94,11 @@ each keep a separate save.
 - Per-tower upgrade levels, on top of the global ones.
 - Drag an existing tower to move it, for a fraction of its cost.
 - Boss modifiers: shielded, splitting, speeds up when damaged.
-- Wave preview during the prep phase.
 - Auto-pause when a boss wave starts, as an option.
 - A run summary on breach: what killed you, what your towers contributed.
+- `game.js` has crossed the ~800-line guideline. The read-only derived helpers
+  (wave curve, roster, costs, multipliers) are the natural thing to lift out
+  next; nothing else in there wants to move.
 
 ## Known issues
 
@@ -91,8 +106,10 @@ each keep a separate save.
   is not persisted. Cheap for the player, simple for the code.
 - Offline income uses the recent-earnings EMA, so a save made right after a
   prestige pays out almost nothing.
-- The panel rebuilds its DOM every ~20 frames, which resets scroll position if
-  the panel is ever taller than the screen. It is suppressed mid-drag.
+- Landscape works but the play field becomes a short letterboxed strip: the
+  world has a fixed 360x480 aspect. Portrait is the design.
+- Prestige and wipe still use the browser's `confirm()`. It works in an
+  installed PWA but looks nothing like the rest of the game.
 - Free placement may collapse into "stack everything on the longest straight".
   Minimum spacing is the only thing pushing back on that so far.
 - Firing sounds are rate limited to 12/second in total, so a wall of turrets

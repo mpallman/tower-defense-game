@@ -88,6 +88,7 @@ function freshRunState() {
     phaseTimer: BALANCE.waves.prepTime,
     spawnTimer: 0,
     queue: [],                // enemy type keys left to spawn this wave
+    waveTotal: 0,             // how many the current wave started with, for the progress bar
     credits: BALANCE.economy.startingCredits,
     vaultHp: BALANCE.vault.maxHp,
     runEarned: 0,
@@ -188,6 +189,31 @@ export function createGame(options = {}) {
   function isBossWave(wave) {
     return wave % BALANCE.waves.bossEvery === 0;
   }
+  // Which enemy types this wave can field, and how tough each one is. Derived
+  // straight from BALANCE, so the UI can show it without rolling the dice or
+  // touching the rng the real wave will use.
+  function waveRoster(wave) {
+    const hp = waveHp(wave);
+    const pool = Object.entries(BALANCE.enemies).filter(([, e]) => e.weight > 0 && wave >= e.minWave);
+    const total = pool.reduce((sum, [, e]) => sum + e.weight, 0) || 1;
+    const list = pool.map(([key, def]) => ({ key, def, share: def.weight / total, hp: hp * def.hp }));
+    if (isBossWave(wave)) {
+      const def = BALANCE.enemies.boss;
+      list.push({ key: 'boss', def, share: 0, hp: hp * def.hp });
+    }
+    return list;
+  }
+
+  // 0..1 through the current phase: the prep countdown, then the wave itself.
+  function waveProgress() {
+    if (state.phase === 'prep') {
+      return 1 - Math.max(0, Math.min(1, state.phaseTimer / BALANCE.waves.prepTime));
+    }
+    if (!state.waveTotal) return 0;
+    const left = state.queue.length + state.enemies.length;
+    return Math.max(0, Math.min(1, 1 - left / state.waveTotal));
+  }
+
   function pendingCores() {
     const p = BALANCE.prestige;
     return Math.floor(Math.pow(Math.max(0, state.runEarned) / p.divisor, p.exponent));
@@ -267,6 +293,7 @@ export function createGame(options = {}) {
   function startWave() {
     state.phase = 'wave';
     state.queue = buildQueue(state.wave);
+    state.waveTotal = state.queue.length;
     state.spawnTimer = 0;
     api.onEvent({ type: 'waveStart', wave: state.wave, boss: isBossWave(state.wave) });
     if (api.cosmetics) {
@@ -289,6 +316,7 @@ export function createGame(options = {}) {
     state.wave = 1;
     state.phase = 'prep';
     state.phaseTimer = BALANCE.waves.prepTime;
+    state.waveTotal = 0;
     state.vaultHp = BALANCE.vault.maxHp;
     if (api.cosmetics) state.banner = { text: 'VAULT BREACHED', life: 2.2, max: 2.2 };
     api.onEvent({ type: 'breach' });
@@ -721,6 +749,7 @@ export function createGame(options = {}) {
     state.phase = 'prep';
     state.phaseTimer = BALANCE.waves.prepTime;
     state.queue = [];
+    state.waveTotal = 0;
     state.enemies.length = 0;
     state.projectiles.length = 0;
     state.fx.length = 0;
@@ -776,6 +805,8 @@ export function createGame(options = {}) {
   api.pendingCores = pendingCores;
   api.isBossWave = isBossWave;
   api.waveHp = waveHp;
+  api.waveRoster = waveRoster;
+  api.waveProgress = waveProgress;
   api.towerById = (id) => state.towers.find((t) => t.id === id) || null;
 
   return api;

@@ -45,6 +45,11 @@ Already split into ES modules loaded with `<script type="module">`, no build
 step. Keep any single module under ~800 lines; split by responsibility rather
 than growing one file.
 
+The panel is built once per tab and then synced in place: every changing value
+registers an updater closure at build time, and one cheap pass per frame writes
+only what differs. Do not go back to rebuilding the panel on a timer — that
+throws away scroll position, drag listeners and pressed state.
+
 ## Hard constraints
 
 1. **No external assets, ever.** If something needs art, it gets drawn with
@@ -110,10 +115,13 @@ just did unless I ask.
 
 ## Repo layout
 
-    index.html            entry point, DOM chrome, input, UI panels
+    index.html            entry point, DOM chrome, stylesheet, input wiring
     game.js               simulation, state, systems, level geometry
     balance.js            the BALANCE object — every tunable number
-    render.js             all canvas drawing, procedural sprite generation
+    sprites.js            procedural sprite baking, shared by canvas and DOM
+    render.js             the play field: background, path, entities, effects
+    icons.js              DOM-facing art: sprite tiles and inline SVG glyphs
+    ui.js                 HUD, wave bar, and the three tab panels
     audio.js              synthesised sound effects and procedural music
     save.js               serialise / deserialise / migrate
     format.js             number and duration formatting

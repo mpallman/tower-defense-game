@@ -398,7 +398,7 @@ async function main() {
   const layout = await page.evaluate(() => {
     const doc = document.documentElement;
     const small = [...document.querySelectorAll('#tabs button, #controls button, #panel .row')]
-      .filter((el) => el.getBoundingClientRect().height < 44)
+      .filter((el) => el.offsetParent !== null && el.getBoundingClientRect().height < 44)
       .map((el) => el.textContent.trim().slice(0, 24));
     return {
       overflowX: doc.scrollWidth > doc.clientWidth,
@@ -411,6 +411,131 @@ async function main() {
   check('the play area gets most of the screen', layout.stage > 340, `${Math.round(layout.stage)}px`);
 
   await page.screenshot({ path: path.join(SHOTS, 'phone-build.png') });
+
+  // Portrait is the design, but a phone turned sideways must not break.
+  await page.setViewportSize({ width: 844, height: 390 });
+  await page.waitForTimeout(200);
+  const landscape = await page.evaluate(() => {
+    const doc = document.documentElement;
+    return {
+      overflowX: doc.scrollWidth > doc.clientWidth,
+      overflowY: doc.scrollHeight > doc.clientHeight,
+      stage: Math.round(document.getElementById('stage').getBoundingClientRect().height),
+      panel: Math.round(document.getElementById('panel').getBoundingClientRect().height),
+    };
+  });
+  await page.screenshot({ path: path.join(SHOTS, 'phone-landscape.png') });
+  check('landscape still fits on screen', !landscape.overflowX && !landscape.overflowY,
+    JSON.stringify(landscape));
+  check('landscape keeps a play field and a usable panel',
+    landscape.stage > 100 && landscape.panel > 80, JSON.stringify(landscape));
+  await page.setViewportSize(PHONE);
+  await page.waitForTimeout(200);
+
+  // --- panel ---------------------------------------------------------------
+  section('panel');
+  const cards = await page.evaluate(() => {
+    const out = [];
+    for (const card of document.querySelectorAll('#panel .card.tower')) {
+      out.push({
+        name: card.querySelector('.name').textContent,
+        art: getComputedStyle(card.querySelector('.tile')).backgroundImage.slice(0, 22),
+        chips: card.querySelectorAll('.chip').length,
+        cost: card.querySelector('.cost b').textContent,
+      });
+    }
+    return out;
+  });
+  check('every tower has a card with its own sprite', cards.length === 3
+    && cards.every((c) => c.art.startsWith('url("data:image/png')),
+    cards.map((c) => `${c.name} ${c.art}`).join(' | '));
+  check('tower cards show stats and a price', cards.every((c) => c.chips === 3 && c.cost.length > 0),
+    cards.map((c) => `${c.name} ${c.cost}`).join(' | '));
+
+  const roster = await page.evaluate(() => {
+    const { game, ui } = globalThis.__td;
+    game.state.wave = 10;            // a boss wave, with every enemy unlocked
+    ui.sync();
+    return [...document.querySelectorAll('#roster .foe')].map((foe) => ({
+      art: getComputedStyle(foe.querySelector('.foe-art')).backgroundImage.slice(0, 22),
+      hp: foe.querySelector('.foe-hp').textContent,
+      boss: foe.classList.contains('is-boss'),
+      title: foe.title,
+    }));
+  });
+  check('the wave bar shows a sprite for every enemy in the wave',
+    roster.length === 4 && roster.every((f) => f.art.startsWith('url("data:image/png')),
+    roster.map((f) => f.title).join(' | '));
+  check('a boss wave flags the boss in the roster', roster.some((f) => f.boss),
+    roster.map((f) => `${f.title}${f.boss ? ' (boss)' : ''}`).join(' | '));
+  await page.screenshot({ path: path.join(SHOTS, 'phone-boss-roster.png') });
+
+  // The panel is synced in place, not rebuilt: scroll position and the nodes
+  // themselves must survive a frame.
+  const kept = await page.evaluate(() => {
+    const { game, ui } = globalThis.__td;
+    const panel = document.getElementById('panel');
+    panel.scrollTop = 24;
+    const card = document.querySelector('#panel .card.tower');
+    card.dataset.mark = 'before';
+    const costBefore = card.querySelector('.cost b').textContent;
+    const affordBefore = card.querySelector('.cost').classList.contains('no');
+    game.state.credits = 0;
+    for (let i = 0; i < 5; i++) ui.sync();
+    const after = document.querySelector('#panel .card.tower');
+    return {
+      sameNode: after.dataset.mark === 'before',
+      scroll: panel.scrollTop,
+      costBefore,
+      affordBefore,
+      affordAfter: after.querySelector('.cost').classList.contains('no'),
+    };
+  });
+  check('syncing keeps the panel nodes and the scroll position',
+    kept.sameNode && kept.scroll === 24, `scroll ${kept.scroll}, same node ${kept.sameNode}`);
+  check('a price turns unaffordable when the credits run out',
+    !kept.affordBefore && kept.affordAfter);
+
+  const hud = await page.evaluate(() => {
+    const { game, ui } = globalThis.__td;
+    game.state.credits = 12_345;
+    game.state.vaultHp = 5;
+    game.state.cores = 3;
+    ui.sync();
+    return {
+      credits: document.getElementById('stats').querySelector('.tone-gold .v').textContent,
+      vault: document.querySelector('.tone-good .v').textContent,
+      hurt: document.querySelector('.tone-good').classList.contains('is-hurt'),
+      cores: document.querySelector('.tone-core .v').textContent,
+      mult: document.querySelector('.tone-core .suffix').textContent,
+      bossStar: getComputedStyle(document.querySelector('.tone-accent .boss-star')).display,
+    };
+  });
+  check('the hud formats the run', hud.credits === '12.3K' && hud.vault === '5' && hud.cores === '3',
+    `${hud.credits} / ${hud.vault} / ${hud.cores}`);
+  check('a damaged vault reads as damaged', hud.hurt);
+  check('the cores tile carries the prestige multiplier', hud.mult === '×1.18', hud.mult);
+  check('a boss wave is marked in the hud', hud.bossStar !== 'none', hud.bossStar);
+
+  // The sync pass runs on every animation frame, so it has to stay cheap.
+  const syncCost = await page.evaluate(() => {
+    const { ui } = globalThis.__td;
+    ui.sync();
+    const t0 = performance.now();
+    for (let i = 0; i < 120; i++) ui.sync();
+    return (performance.now() - t0) / 120;
+  });
+  check('a ui sync is cheap enough to run every frame', syncCost < 1.5, `${syncCost.toFixed(3)} ms`);
+
+  // put the run back the way the layout section left it
+  await page.evaluate(() => {
+    const { game, ui } = globalThis.__td;
+    game.state.wave = 3;
+    game.state.cores = 0;
+    game.state.credits = 900;
+    game.state.vaultHp = globalThis.__td.BALANCE.vault.maxHp;
+    ui.sync();
+  });
 
   // mid-combat, with enemies and projectiles on screen
   const combat = await page.evaluate(() => {
@@ -428,6 +553,12 @@ async function main() {
   await page.evaluate(() => globalThis.__td.setTab('prestige'));
   await page.waitForTimeout(150);
   await page.screenshot({ path: path.join(SHOTS, 'phone-prestige.png') });
+  await page.evaluate(() => {
+    const panel = document.getElementById('panel');
+    panel.scrollTop = panel.scrollHeight;
+  });
+  await page.waitForTimeout(150);
+  await page.screenshot({ path: path.join(SHOTS, 'phone-settings.png') });
 
   // --- sprites -----------------------------------------------------------
   section('sprites');
@@ -516,22 +647,48 @@ async function main() {
   // the buttons, not just the api
   await page.evaluate(() => { globalThis.__td.game.setPaused(false); globalThis.__td.game.setSpeed(1); });
   await page.locator('#btn-pause').click();
+  const visibleIcons = (selector) => page.evaluate((sel) => [...document.querySelectorAll(sel)]
+    .filter((node) => node.getBoundingClientRect().height > 0).length, selector);
   const pausedByButton = await page.evaluate(() => ({
     paused: globalThis.__td.game.state.paused,
-    label: document.getElementById('btn-pause').firstChild.textContent,
+    label: document.getElementById('btn-pause').querySelector('.label').textContent,
   }));
   check('the pause button pauses and relabels', pausedByButton.paused && pausedByButton.label === 'Resume',
     pausedByButton.label);
+  const playIconShown = await visibleIcons('#btn-pause .ico svg');
+  check('a paused button shows one icon, not both', playIconShown === 1, `${playIconShown} icons`);
   await page.screenshot({ path: path.join(SHOTS, 'phone-paused.png') });
   await page.locator('#btn-pause').click();
   await page.locator('#btn-speed').click();
   const speedByButton = await page.evaluate(() => ({
     speed: globalThis.__td.game.state.speed,
-    label: document.getElementById('btn-speed').firstChild.textContent,
+    label: document.getElementById('btn-speed').querySelector('.label').textContent,
     paused: globalThis.__td.game.state.paused,
   }));
   check('the speed button steps to 2x', speedByButton.speed === 2 && speedByButton.label === '2×', speedByButton.label);
   check('resume clears the pause', !speedByButton.paused);
+  const pauseIconShown = await visibleIcons('#btn-pause .ico svg');
+  check('a running button shows one icon, not both', pauseIconShown === 1, `${pauseIconShown} icons`);
+
+  // The same swap drives the sound toggle, which is an SVG too.
+  await page.evaluate(() => globalThis.__td.setTab('prestige'));
+  const soundIcons = await visibleIcons('#panel .toggle:first-child .ico svg');
+  await page.evaluate(() => {
+    const { game, ui } = globalThis.__td;
+    game.state.muted = true;
+    ui.sync();
+  });
+  const mutedIcons = await visibleIcons('#panel .toggle:first-child .ico svg');
+  const mutedLabel = await page.evaluate(() =>
+    document.querySelector('#panel .toggle:first-child .label').textContent);
+  check('the sound toggle swaps its icon instead of stacking them',
+    soundIcons === 1 && mutedIcons === 1 && mutedLabel === 'Muted',
+    `${soundIcons} -> ${mutedIcons}, ${mutedLabel}`);
+  await page.evaluate(() => {
+    const { game, ui } = globalThis.__td;
+    game.state.muted = false;
+    ui.setTab('build');
+  });
 
   // speed is a preference and is saved; pause is not
   await page.evaluate(() => {
