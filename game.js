@@ -210,6 +210,10 @@ export function createGame(options = {}) {
       });
     }
   }
+  function hitRing(x, y, color, size) {
+    if (!api.cosmetics) return;
+    state.fx.push({ kind: 'ring', x, y, color, size, life: BALANCE.fx.hitRingSeconds, max: BALANCE.fx.hitRingSeconds });
+  }
   function beamFx(x1, y1, x2, y2, color) {
     if (!api.cosmetics) return;
     state.fx.push({ kind: 'beam', x1, y1, x2, y2, color, life: 0.08, max: 0.08 });
@@ -255,6 +259,7 @@ export function createGame(options = {}) {
       x: LEVEL.path[0][0],
       y: LEVEL.path[0][1],
       flash: 0,
+      angle: 0,
       spin: rng() * Math.PI * 2,
     });
   }
@@ -365,6 +370,10 @@ export function createGame(options = {}) {
       e.flash = Math.max(0, e.flash - dt);
       e.spin += dt * 1.2;
       const p = pointAtDistance(e.dist);
+      // Heading comes free from the movement we just did: no extra path lookup.
+      if (Math.abs(p.x - e.x) > 1e-4 || Math.abs(p.y - e.y) > 1e-4) {
+        e.angle = Math.atan2(p.y - e.y, p.x - e.x);
+      }
       e.x = p.x; e.y = p.y;
       if (e.dist >= LEVEL.pathLength) {
         const def = BALANCE.enemies[e.type];
@@ -380,11 +389,13 @@ export function createGame(options = {}) {
     for (const tower of state.towers) {
       const stats = towerStats(tower);
       tower.cooldown -= dt;
+      if (tower.recoil > 0) tower.recoil = Math.max(0, tower.recoil - dt / BALANCE.fx.recoilSeconds);
       const target = findTarget(tower, stats);
       if (!target) continue;
       tower.angle = Math.atan2(target.y - tower.y, target.x - tower.x);
       if (tower.cooldown > 0) continue;
       tower.cooldown = 1 / stats.fireRate;
+      tower.recoil = 1;
       if (api.cosmetics) api.onEvent({ type: 'shot', tower: tower.type });
       if (stats.beam) {
         beamFx(tower.x, tower.y, target.x, target.y, BALANCE.towers[tower.type].color);
@@ -420,9 +431,11 @@ export function createGame(options = {}) {
         if (p.splashRadius > 0) {
           splashDamage(p.x, p.y, p.splashRadius, p.damage, p.splashFalloff);
           burst(p.x, p.y, p.color, 8);
+          hitRing(p.x, p.y, p.color, p.splashRadius);
           if (tower) tower.damageDone += p.damage;
         } else if (target) {
           if (tower) tower.damageDone += p.damage;
+          hitRing(p.x, p.y, p.color, 7);
           if (damageEnemy(target, p.damage) && tower) tower.kills += 1;
         }
         state.projectiles.splice(i, 1);
@@ -530,7 +543,7 @@ export function createGame(options = {}) {
     state.credits -= cost;
     const tower = {
       id: state.nextId++, type, x, y, spent: cost,
-      cooldown: 0, angle: -Math.PI / 2, kills: 0, damageDone: 0,
+      cooldown: 0, angle: -Math.PI / 2, recoil: 0, kills: 0, damageDone: 0,
     };
     state.towers.push(tower);
     api.onEvent({ type: 'build', tower: type, cost });
@@ -688,7 +701,7 @@ export function createGame(options = {}) {
       state.towers.push({
         id: state.nextId++, type: t.type, x: t.x, y: t.y,
         spent: num(t.spent, BALANCE.towers[t.type].cost),
-        cooldown: 0, angle: -Math.PI / 2, kills: num(t.kills, 0), damageDone: 0,
+        cooldown: 0, angle: -Math.PI / 2, recoil: 0, kills: num(t.kills, 0), damageDone: 0,
       });
     }
     state.cores = Math.max(0, Math.floor(num(data.cores, 0)));

@@ -38,8 +38,6 @@ hours, checks save/reload/migration/offline, and writes screenshots at 390×844
 into `test/screenshots/` (gitignored).
 
 ## Next up
-
-- More detailed procedural sprites.
 - Tower targeting options (first / strongest / closest) per tower.
 - Per-tower upgrade levels, on top of the global ones.
 - Drag an existing tower to move it, for a fraction of its cost.
@@ -64,6 +62,12 @@ into `test/screenshots/` (gitignored).
   but never changes key or progression. A test asserts every scheduled note
   stays in key, so a future melody change cannot silently go sour.
 - Pause is deliberately not saved. Speed is.
+- The render performance check runs headless, where there is no real
+  rasteriser. It measures the draw calls issued, not GPU time, so it catches
+  per-frame work that should have been baked but says nothing about how the
+  game actually performs on a phone.
+- Sprites are baked at 3x and blitted. Changing `BALANCE.build.towerRadius` or
+  an enemy radius rebakes them at boot; nothing needs regenerating by hand.
 - Free placement may collapse into "stack everything on the longest straight".
   Minimum spacing is the only thing pushing back on that so far.
 - Saved towers are restored at their exact coordinates without re-checking the

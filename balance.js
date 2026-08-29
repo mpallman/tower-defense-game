@@ -124,6 +124,8 @@ export const BALANCE = {
     maxParticles: 180,
     floatLife: 0.9,
     particleLife: 0.5,
+    recoilSeconds: 0.13,  // how long a barrel stays kicked back after firing
+    hitRingSeconds: 0.18,
   },
 
   controls: {

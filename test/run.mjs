@@ -429,6 +429,59 @@ async function main() {
   await page.waitForTimeout(150);
   await page.screenshot({ path: path.join(SHOTS, 'phone-prestige.png') });
 
+  // --- sprites -----------------------------------------------------------
+  section('sprites');
+  const art = await page.evaluate(() => {
+    const { game, renderer } = globalThis.__td;
+    game.hardReset();
+    game.state.credits = 100_000;
+    game.state.wave = 15;
+    const spots = [[30, 120], [240, 120], [150, 222], [245, 330], [95, 440], [30, 330]];
+    spots.forEach(([x, y], i) => game.buildTower(x, y, ['turret', 'laser', 'mortar'][i % 3]));
+
+    // fill the field: a spread of every enemy type plus a boss
+    game.state.phase = 'wave';
+    game.state.queue = [];
+    game.state.enemies.length = 0;
+    const types = ['grunt', 'swift', 'hulk', 'grunt', 'swift'];
+    types.forEach((type, i) => {
+      game.state.queue.push(type);
+    });
+    for (let i = 0; i < 60 && game.state.enemies.length < 5; i++) game.advanceBy(0.5);
+    game.advanceBy(1.5);
+
+    const boss = {
+      id: 990001, type: 'boss', hp: 6_000, maxHp: 10_000, speed: 12, bounty: 100,
+      radius: 16, dist: 520, x: 0, y: 0, flash: 0, angle: 0, spin: 0.7,
+    };
+    game.state.enemies.push(boss);
+    game.advanceBy(0.6);
+
+    return {
+      sprites: renderer.spriteCount(),
+      enemies: game.state.enemies.length,
+      projectiles: game.state.projectiles.length,
+      types: [...new Set(game.state.enemies.map((e) => e.type))].sort(),
+    };
+  });
+  check('every enemy and tower has baked sprite layers', art.sprites === 14, `${art.sprites} layers`);
+  check('the scene has a mix of enemies', art.enemies >= 3 && art.types.includes('boss'), art.types.join(', '));
+
+  await page.waitForTimeout(200);
+  await page.screenshot({ path: path.join(SHOTS, 'phone-sprites.png') });
+
+  // detail must not cost the frame rate
+  const perf = await page.evaluate(() => {
+    const { game, renderer } = globalThis.__td;
+    renderer.draw(game);                      // warm up
+    const t0 = performance.now();
+    for (let i = 0; i < 60; i++) renderer.draw(game);
+    return (performance.now() - t0) / 60;
+  });
+  // Headless has no real rasteriser, so this measures the draw calls we issue,
+  // not GPU time. It still catches per-frame work that should be baked once.
+  check('a busy frame issues its draw calls cheaply', perf < 4, `${perf.toFixed(2)} ms per frame`);
+
   // --- pause and speed ---------------------------------------------------
   section('pace');
   const pace = await page.evaluate(async () => {
