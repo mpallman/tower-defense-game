@@ -34,15 +34,16 @@ Tone: cold, clean, readable at a glance on a small screen.
 | Platform | Web, phone-first portrait layout. No native app, no APK. |
 | Language | Vanilla JavaScript (ES2022). No framework, no TypeScript. |
 | Rendering | Single `<canvas>`, 2D context, fixed logical resolution, scaled to fit |
-| Build | None. Static files, opened directly or served with any static host. |
+| Build | None. Static files served by any static host. ES modules need http, so `file://` does not work — see TODO.md. |
 | Dependencies | Zero. No npm packages at runtime. |
 | Saves | JSON in `localStorage`, single slot, versioned schema |
-| Assets | Generated in code — shapes, gradients, procedural sprites. No image, font, or audio files are ever downloaded or committed. |
+| Assets | Generated in code — shapes, gradients, procedural sprites. No image, font, or audio files are ever downloaded or committed. The one committed `icon.svg` is hand-written vector markup for the install icon, which a manifest cannot get from a canvas. |
 | Audio | WebAudio synthesis only, and only after the first user gesture |
+| Delivery | Installable web app: service worker plus manifest, playable offline from the home screen |
 
-Start as one `index.html` plus one `game.js`. Once `game.js` passes ~1500 lines,
-split it into ES modules loaded with `<script type="module">` — still no build
-step.
+Already split into ES modules loaded with `<script type="module">`, no build
+step. Keep any single module under ~800 lines; split by responsibility rather
+than growing one file.
 
 ## Hard constraints
 
@@ -76,6 +77,10 @@ change as working:
   claiming the layout is fine.
 - Test the save path explicitly: save, reload, assert state matches.
 
+Run everything with `node test/run.mjs`. It starts its own static server, uses
+the globally installed Playwright rather than a repo dependency, and writes
+screenshots to `test/screenshots/`. Look at them.
+
 "It looks correct to me" is not verification. Neither is "the file parses."
 
 ## What I decide, not you
@@ -105,10 +110,24 @@ just did unless I ask.
 
 ## Repo layout
 
-    index.html      entry point, canvas + minimal DOM chrome
-    game.js         game loop, state, systems
-    balance.js      the BALANCE object — every tunable number
-    render.js       all canvas drawing, procedural sprite generation
-    save.js         serialise / deserialise / migrate
-    test/           Playwright scripts
-    TODO.md         next up, known issues, balance
+    index.html            entry point, DOM chrome, input, UI panels
+    game.js               simulation, state, systems, level geometry
+    balance.js            the BALANCE object — every tunable number
+    render.js             all canvas drawing, procedural sprite generation
+    audio.js              synthesised sound effects and procedural music
+    save.js               serialise / deserialise / migrate
+    format.js             number and duration formatting
+    sw.js                 service worker — offline play, versioned cache
+    manifest.webmanifest  install metadata
+    icon.svg              app icon, hand-written vector
+    test/run.mjs          the whole Playwright suite
+    TODO.md               state of play, next up, known issues, balance
+
+## Where it runs
+
+Public repo, GitHub Pages deploys from the default branch, which is the
+working branch. https://mpallman.github.io/tower-defense-game/ — installed to
+the phone home screen and playable offline.
+
+There is no staging branch and no merge step: a push is a deploy. Bump `CACHE`
+in `sw.js` on every change or installed phones keep serving the old build.
