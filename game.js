@@ -6,6 +6,12 @@
 
 import { BALANCE } from './balance.js';
 import * as Save from './save.js';
+import {
+  freshResources, stepEconomy, payForShot, towerProblem,
+  suppliedAt, flowRates, oreNodeAt, RESOURCE_KEYS,
+} from './economy.js';
+import * as Place from './placement.js';
+import * as Derive from './derive.js';
 
 // ---------------------------------------------------------------- level ----
 // Geometry, not balance: the fixed path the enemies walk.
@@ -33,6 +39,14 @@ LEVEL.vault = LEVEL.path[LEVEL.path.length - 1];
 
 // Where the path sits inside the arena. The camera opens framed on this, so
 // the framing follows the path rather than repeating its numbers somewhere.
+// Ore nodes: fixed geometry, like the path. Every one sits well clear of the
+// path so a miner standing on it is never refused for being too close.
+LEVEL.oreNodes = [
+  [-120, -120], [60, -145], [250, -105],
+  [430, 40], [440, 265], [400, 520],
+  [120, 600], [-120, 480], [-130, 180],
+];
+
 LEVEL.bounds = LEVEL.path.reduce((box, [x, y]) => ({
   x0: Math.min(box.x0, x), y0: Math.min(box.y0, y),
   x1: Math.max(box.x1, x), y1: Math.max(box.y1, y),
@@ -105,6 +119,8 @@ function freshRunState() {
     runEarned: 0,
     upgrades: { damage: 0, rate: 0, range: 0 },
     towers: [],
+    buildings: [],
+    resources: freshResources(),
   };
 }
 
@@ -132,6 +148,7 @@ function freshState() {
     incomeAccum: 0,
     incomeTimer: 0,
     selected: null,    // id of the tower whose range and stats are shown
+    selectedBuilding: null, // id of the building whose supply radius is shown
     buildType: null,   // tower type armed for tap-to-place
     drag: null,        // { type, x, y, ok, reason } while dragging a new tower
     banner: null,
@@ -155,80 +172,19 @@ export function createGame(options = {}) {
   };
 
   // --- derived numbers ---------------------------------------------------
-  const prestigeMult = () => 1 + state.cores * BALANCE.prestige.bonusPerCore;
-
-  function upgradeMult(key) {
-    return 1 + state.upgrades[key] * BALANCE.upgrades[key].effect;
-  }
-
-  function upgradeCost(key) {
-    const u = BALANCE.upgrades[key];
-    return Math.ceil(u.cost * Math.pow(u.growth, state.upgrades[key]));
-  }
-
-  function towerCost(type) {
-    const t = BALANCE.towers[type];
-    const owned = state.towers.filter((tw) => tw.type === type).length;
-    return Math.ceil(t.cost * Math.pow(t.costGrowth, owned));
-  }
-
-  function towerStats(tower) {
-    const t = BALANCE.towers[tower.type];
-    return {
-      damage: t.damage * upgradeMult('damage') * prestigeMult(),
-      range: t.range * upgradeMult('range'),
-      fireRate: t.fireRate * upgradeMult('rate'),
-      splashRadius: t.splashRadius || 0,
-      splashFalloff: t.splashFalloff || 0,
-      projectileSpeed: t.projectileSpeed || 0,
-      beam: !!t.beam,
-    };
-  }
-
-  function waveHp(wave) {
-    return BALANCE.waves.hpBase * Math.pow(BALANCE.waves.hpGrowth, wave - 1);
-  }
-  function waveSpeed(wave) {
-    return Math.min(
-      BALANCE.waves.speedMax,
-      BALANCE.waves.speedBase * Math.pow(BALANCE.waves.speedGrowth, wave - 1),
-    );
-  }
-  function waveBounty(wave) {
-    return BALANCE.waves.bountyBase * Math.pow(BALANCE.waves.bountyGrowth, wave - 1);
-  }
-  function isBossWave(wave) {
-    return wave % BALANCE.waves.bossEvery === 0;
-  }
-  // Which enemy types this wave can field, and how tough each one is. Derived
-  // straight from BALANCE, so the UI can show it without rolling the dice or
-  // touching the rng the real wave will use.
-  function waveRoster(wave) {
-    const hp = waveHp(wave);
-    const pool = Object.entries(BALANCE.enemies).filter(([, e]) => e.weight > 0 && wave >= e.minWave);
-    const total = pool.reduce((sum, [, e]) => sum + e.weight, 0) || 1;
-    const list = pool.map(([key, def]) => ({ key, def, share: def.weight / total, hp: hp * def.hp }));
-    if (isBossWave(wave)) {
-      const def = BALANCE.enemies.boss;
-      list.push({ key: 'boss', def, share: 0, hp: hp * def.hp });
-    }
-    return list;
-  }
-
-  // 0..1 through the current phase: the prep countdown, then the wave itself.
-  function waveProgress() {
-    if (state.phase === 'prep') {
-      return 1 - Math.max(0, Math.min(1, state.phaseTimer / BALANCE.waves.prepTime));
-    }
-    if (!state.waveTotal) return 0;
-    const left = state.queue.length + state.enemies.length;
-    return Math.max(0, Math.min(1, 1 - left / state.waveTotal));
-  }
-
-  function pendingCores() {
-    const p = BALANCE.prestige;
-    return Math.floor(Math.pow(Math.max(0, state.runEarned) / p.divisor, p.exponent));
-  }
+  // The maths lives in derive.js; these bind it to this game's state.
+  const prestigeMult = () => Derive.prestigeMult(state);
+  const upgradeMult = (key) => Derive.upgradeMult(state, key);
+  const upgradeCost = (key) => Derive.upgradeCost(state, key);
+  const towerCost = (type) => Place.towerCost(state, type);
+  const towerStats = (tower) => Derive.towerStats(state, tower);
+  const waveHp = Derive.waveHp;
+  const waveSpeed = Derive.waveSpeed;
+  const waveBounty = Derive.waveBounty;
+  const isBossWave = Derive.isBossWave;
+  const waveRoster = Derive.waveRoster;
+  const waveProgress = () => Derive.waveProgress(state);
+  const pendingCores = () => Derive.pendingCores(state);
 
   // --- fx ----------------------------------------------------------------
   function floatText(x, y, text, color) {
@@ -425,14 +381,26 @@ export function createGame(options = {}) {
     }
 
     // towers
+    stepEconomy(state, dt);
+
     for (const tower of state.towers) {
       const stats = towerStats(tower);
       tower.cooldown -= dt;
       if (tower.recoil > 0) tower.recoil = Math.max(0, tower.recoil - dt / BALANCE.fx.recoilSeconds);
+      // Judged every step, not only when there is something to shoot at: a
+      // tower with no supply line has to show it while you are still building.
+      tower.starved = !!towerProblem(state, tower);
       const target = findTarget(tower, stats);
       if (!target) continue;
       tower.angle = Math.atan2(target.y - tower.y, target.x - tower.x);
       if (tower.cooldown > 0) continue;
+      // Supply is checked before the cooldown is spent, so a starved tower is
+      // ready to fire the instant its line comes back rather than waiting out
+      // a cooldown it never got to use.
+      if (tower.starved || !payForShot(state, tower)) {
+        tower.starved = true;
+        continue;
+      }
       tower.cooldown = 1 / stats.fireRate;
       tower.recoil = 1;
       if (api.cosmetics) api.onEvent({ type: 'shot', tower: tower.type });
@@ -552,52 +520,25 @@ export function createGame(options = {}) {
   };
 
   // --- player actions ----------------------------------------------------
-  // Can a tower stand here? Returns a reason so the UI can explain a refusal.
-  api.canPlaceAt = function canPlaceAt(x, y, ignoreId = null) {
-    const b = BALANCE.build;
-    if (!Number.isFinite(x) || !Number.isFinite(y)) return { ok: false, reason: 'off the map' };
-    const w = BALANCE.world;
-    if (x < w.x + b.edgeMargin || x > w.x + w.width - b.edgeMargin
-      || y < w.y + b.edgeMargin || y > w.y + w.height - b.edgeMargin) {
-      return { ok: false, reason: 'off the map' };
-    }
-    if (distanceToPath(x, y) < BALANCE.world.pathWidth / 2 + b.towerRadius + b.pathClearance) {
-      return { ok: false, reason: 'too close to the path' };
-    }
-    if (Math.hypot(x - LEVEL.vault[0], y - LEVEL.vault[1]) < b.vaultClearance) {
-      return { ok: false, reason: 'too close to the vault' };
-    }
-    for (const t of state.towers) {
-      if (t.id === ignoreId) continue;
-      if (Math.hypot(x - t.x, y - t.y) < b.minSpacing) return { ok: false, reason: 'too close to another tower' };
-    }
-    return { ok: true };
-  };
+  // The rules live in placement.js; these keep the api shape and fire events.
+  api.canPlaceAt = (x, y, ignoreId = null) => Place.canPlaceTower(state, x, y, ignoreId);
+  api.canPlaceBuildingAt = (x, y, type, ignoreId = null) => Place.canPlaceBuilding(state, x, y, type, ignoreId);
+  api.sellTower = (id) => Place.sellTower(state, id);
+  api.sellBuilding = (id) => Place.sellBuilding(state, id);
+  const seedBase = () => Place.seedBase(state);
+  api.seedBase = seedBase;
+  const buildingCost = (type) => Place.buildingCost(state, type);
 
   api.buildTower = function buildTower(x, y, type) {
-    if (!BALANCE.towers[type]) return { ok: false, reason: 'unknown tower' };
-    const spot = api.canPlaceAt(x, y);
-    if (!spot.ok) return spot;
-    const cost = towerCost(type);
-    if (state.credits < cost) return { ok: false, reason: 'not enough credits' };
-    state.credits -= cost;
-    const tower = {
-      id: state.nextId++, type, x, y, spent: cost,
-      cooldown: 0, angle: -Math.PI / 2, recoil: 0, kills: 0, damageDone: 0,
-    };
-    state.towers.push(tower);
-    api.onEvent({ type: 'build', tower: type, cost });
-    return { ok: true, cost, id: tower.id };
+    const res = Place.buildTower(state, x, y, type);
+    if (res.ok) api.onEvent({ type: 'build', tower: type, cost: res.cost });
+    return res;
   };
 
-  api.sellTower = function sellTower(id) {
-    const i = state.towers.findIndex((t) => t.id === id);
-    if (i < 0) return { ok: false, reason: 'no such tower' };
-    const refund = Math.floor(state.towers[i].spent * BALANCE.economy.sellRefund);
-    state.credits += refund;
-    state.towers.splice(i, 1);
-    if (state.selected === id) state.selected = null;
-    return { ok: true, refund };
+  api.buildBuilding = function buildBuilding(x, y, type, options) {
+    const res = Place.buildBuilding(state, x, y, type, options);
+    if (res.ok) api.onEvent({ type: 'build', building: type, cost: res.cost });
+    return res;
   };
 
   api.buyUpgrade = function buyUpgrade(key) {
@@ -619,24 +560,52 @@ export function createGame(options = {}) {
     return best;
   };
 
+  api.buildingNear = function buildingNear(x, y) {
+    let best = null;
+    let bestD = BALANCE.economy.buildingRadius + 10;
+    for (const b of state.buildings) {
+      const d = Math.hypot(b.x - x, b.y - y);
+      if (d <= bestD) { best = b; bestD = d; }
+    }
+    return best;
+  };
+
   // A tap on the play field: place an armed tower, or select/deselect one.
   api.tapAt = function tapAt(x, y) {
     if (state.buildType) {
-      const res = api.buildTower(x, y, state.buildType);
+      // Armed things are tagged "building:<key>" or plain "<towerKey>", so one
+      // field carries both and only this branch has to know the difference.
+      const isBuilding = state.buildType.startsWith('building:');
+      const res = isBuilding
+        ? api.buildBuilding(x, y, state.buildType.slice(9))
+        : api.buildTower(x, y, state.buildType);
       // Deliberately not selecting the new tower: that would push the tower
       // list down two rows and the next drag would grab the wrong one.
       if (res.ok) state.buildType = null;
       return { kind: 'place', ...res };
     }
     const tower = api.towerNear(x, y);
-    state.selected = tower && state.selected !== tower.id ? tower.id : null;
-    return { kind: tower ? 'tower' : 'none', id: state.selected };
+    if (tower) {
+      state.selectedBuilding = null;
+      state.selected = state.selected !== tower.id ? tower.id : null;
+      return { kind: 'tower', id: state.selected };
+    }
+    const building = api.buildingNear(x, y);
+    if (building) {
+      state.selected = null;
+      state.selectedBuilding = state.selectedBuilding !== building.id ? building.id : null;
+      return { kind: 'building', id: state.selectedBuilding };
+    }
+    state.selected = null;
+    state.selectedBuilding = null;
+    return { kind: 'none', id: null };
   };
 
   // --- drag to place ------------------------------------------------------
-  api.startDrag = function startDrag(type) {
-    if (!BALANCE.towers[type]) return false;
-    state.drag = { type, x: NaN, y: NaN, ok: false, reason: 'drag onto the map' };
+  api.startDrag = function startDrag(type, kind = 'tower') {
+    const known = kind === 'building' ? BALANCE.buildings[type] : BALANCE.towers[type];
+    if (!known) return false;
+    state.drag = { type, kind, x: NaN, y: NaN, ok: false, reason: 'drag onto the map' };
     return true;
   };
 
@@ -645,11 +614,17 @@ export function createGame(options = {}) {
   // nothing under the thumb as you zoom out.
   api.moveDrag = function moveDrag(x, gy) {
     if (!state.drag) return null;
-    const spot = api.canPlaceAt(x, gy);
-    const cost = towerCost(state.drag.type);
+    const building = state.drag.kind === 'building';
+    const spot = building
+      ? api.canPlaceBuildingAt(x, gy, state.drag.type)
+      : api.canPlaceAt(x, gy);
+    const cost = building ? buildingCost(state.drag.type) : towerCost(state.drag.type);
     const affordable = state.credits >= cost;
     Object.assign(state.drag, {
       x, y: gy,
+      // A miner shows itself planted on the node it would snap to.
+      snapX: spot.snapTo ? spot.snapTo.x : x,
+      snapY: spot.snapTo ? spot.snapTo.y : gy,
       ok: spot.ok && affordable,
       reason: spot.ok ? (affordable ? '' : 'not enough credits') : spot.reason,
     });
@@ -660,7 +635,9 @@ export function createGame(options = {}) {
     const drag = state.drag;
     state.drag = null;
     if (!drag || !Number.isFinite(drag.x)) return { ok: false, reason: 'cancelled' };
-    return api.buildTower(drag.x, drag.y, drag.type);
+    return drag.kind === 'building'
+      ? api.buildBuilding(drag.x, drag.y, drag.type)
+      : api.buildTower(drag.x, drag.y, drag.type);
   };
 
   api.cancelDrag = function cancelDrag() { state.drag = null; };
@@ -699,6 +676,8 @@ export function createGame(options = {}) {
     state.incomeRate = 0;
     state.incomeAccum = 0;
     state.incomeTimer = 0;
+    state.selectedBuilding = null;
+    seedBase();
     api.onEvent({ type: 'prestige', cores });
     return { ok: true, cores };
   };
@@ -711,6 +690,8 @@ export function createGame(options = {}) {
       vaultHp: state.vaultHp,
       upgrades: { ...state.upgrades },
       towers: state.towers.map((t) => ({ x: t.x, y: t.y, type: t.type, spent: t.spent, kills: t.kills })),
+      buildings: state.buildings.map((b) => ({ x: b.x, y: b.y, type: b.type, spent: b.spent })),
+      resources: { ...state.resources },
       cores: state.cores,
       prestiges: state.prestiges,
       lifetimeEarned: state.lifetimeEarned,
@@ -746,6 +727,22 @@ export function createGame(options = {}) {
         cooldown: 0, angle: -Math.PI / 2, recoil: 0, kills: num(t.kills, 0), damageDone: 0,
       });
     }
+    state.buildings = [];
+    for (const b of Array.isArray(data.buildings) ? data.buildings : []) {
+      if (!BALANCE.buildings[b.type]) continue;
+      if (!Number.isFinite(b.x) || !Number.isFinite(b.y)) continue;
+      // As with towers: never re-validate a restored position. A later rule
+      // change must not delete what someone built.
+      state.buildings.push({
+        id: state.nextId++, type: b.type, x: b.x, y: b.y,
+        spent: num(b.spent, BALANCE.buildings[b.type].cost), rate: 1,
+      });
+    }
+    state.resources = freshResources();
+    for (const key of RESOURCE_KEYS) {
+      state.resources[key] = Math.max(0, Math.min(BALANCE.resources[key].cap,
+        num(data.resources?.[key], state.resources[key])));
+    }
     state.cores = Math.max(0, Math.floor(num(data.cores, 0)));
     state.prestiges = Math.max(0, Math.floor(num(data.prestiges, 0)));
     state.lifetimeEarned = Math.max(0, num(data.lifetimeEarned, 0));
@@ -768,6 +765,7 @@ export function createGame(options = {}) {
     state.projectiles.length = 0;
     state.fx.length = 0;
     state.selected = null;
+    state.selectedBuilding = null;
     state.buildType = null;
     state.drag = null;
   }
@@ -796,6 +794,9 @@ export function createGame(options = {}) {
     const loaded = Save.loadGame();
     if (!loaded) return { loaded: false };
     restore(loaded.data);
+    // A save written before supply lines existed restores with no buildings at
+    // all. Rather than leaving every tower silent, it gets the opening depot.
+    seedBase();
     let offline = null;
     if (loaded.savedAt) {
       offline = applyOffline(Math.max(0, (clock.now() - loaded.savedAt) / 1000));
@@ -808,6 +809,7 @@ export function createGame(options = {}) {
     Object.assign(state, freshState());
     rng = mulberry32(state.seed);
     lastTickWall = null;
+    seedBase();
   };
 
   // --- read-only helpers for the UI --------------------------------------
@@ -818,10 +820,19 @@ export function createGame(options = {}) {
   api.prestigeMult = prestigeMult;
   api.pendingCores = pendingCores;
   api.isBossWave = isBossWave;
+  // A brand new game never goes through load(), so it seeds here.
+  seedBase();
+
   api.waveHp = waveHp;
   api.waveRoster = waveRoster;
   api.waveProgress = waveProgress;
   api.towerById = (id) => state.towers.find((t) => t.id === id) || null;
+  api.buildingById = (id) => state.buildings.find((b) => b.id === id) || null;
+  api.buildingCost = buildingCost;
+  api.flowRates = () => flowRates(state);
+  api.towerProblem = (tower) => towerProblem(state, tower);
+  api.suppliedAt = (x, y) => suppliedAt(state, x, y);
+  api.oreNodeAt = (x, y) => oreNodeAt(LEVEL.oreNodes, x, y, state.buildings);
 
   return api;
 }

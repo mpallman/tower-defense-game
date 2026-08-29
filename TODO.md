@@ -8,11 +8,11 @@ first; nothing important lives only in a chat log.
 **Branch and deploy.** Work on `claude/create-claude-md-p5kzrk`. It is the
 repo's default branch and GitHub Pages deploys straight from it, so a push is a
 deploy — there is no PR, no merge, no staging. Bump `CACHE` in `sw.js` on every
-change (`vault-defense-v8` → `-v9`), or phones with the game installed keep
+change (`vault-defense-v9` → `-v10`), or phones with the game installed keep
 serving the old build from cache. After a deploy the phone needs two reloads:
 the first fetches, the second swaps the new cache in.
 
-**Tests.** `node test/run.mjs`. 97 checks, all passing as of the camera pass.
+**Tests.** `node test/run.mjs`. 118 checks, all passing as of the economy pass.
 It boots the real page in headless Chromium, so it catches things unit tests
 would not. It needs no install: Playwright is installed globally in the dev
 container and the script resolves it via `npm root -g`, which keeps the repo at
@@ -79,7 +79,7 @@ each keep a separate save.
 - The drag ghost's lift above the finger is applied in *screen* pixels by the
   input layer, not world units by `moveDrag` — a world-space lift vanishes
   under the thumb as you zoom out.
-- Saves carry `schemaVersion` (currently 2) and migrate in a chain: 0 → 1 → 2.
+- Saves carry `schemaVersion` (currently 3) and migrate in a chain: 0 → 1 → 2 → 3.
   Migrations must describe the *old* data — the 1 → 2 migration keeps its own
   frozen copy of the deleted slot table rather than importing the live level.
 - Restored towers are not re-validated against the placement rules. Tightening
@@ -107,6 +107,18 @@ each keep a separate save.
   being competed with.
 - Cosmetic events (`shot`, `kill`, `leak`) are only emitted when
   `api.cosmetics` is true, so a fast-forward doesn't generate millions of them.
+- The economy splits stock from reach on purpose. Stock is global — one number
+  per resource, so there is no hauling to simulate. Reach is local: a tower
+  fires only if some building that *supplies* its resource has it inside that
+  building's radius. Producing and distributing are separate jobs, which is
+  what makes where you put a thing matter.
+- A tower's `starved` flag is recomputed every step whether or not it has
+  something to shoot at, so the red ring shows while you are still laying the
+  base out — that is when you need it.
+- `game.js` is now a thin simulation loop over three pure modules: `derive.js`
+  (numbers), `placement.js` (legal spots and building/selling) and
+  `economy.js` (stock and supply). All three take `state` as an argument and
+  return answers; none of them fire events or touch the clock.
 
 ## Next up
 
@@ -116,11 +128,19 @@ each keep a separate save.
 - Boss modifiers: shielded, splitting, speeds up when damaged.
 - Auto-pause when a boss wave starts, as an option.
 - A run summary on breach: what killed you, what your towers contributed.
-- `game.js` has crossed the ~800-line guideline. The read-only derived helpers
-  (wave curve, roster, costs, multipliers) are the natural thing to lift out
-  next; nothing else in there wants to move.
+- Per-building upgrade or a second miner tier, if ore turns out to be the
+  bottleneck rather than credits.
+- Power as capacity rather than stock. Right now all four resources are the
+  same stock-and-flow model, which keeps one mental model and one starvation
+  rule; "each laser needs 1 power slot" would read more naturally but needs its
+  own UI to explain why a laser silently switched off.
 
 ## Known issues
+
+- **Upgrading to supply lines idles some existing towers.** A save from before
+  this change gets the opening depot by the vault, so towers outside its 115
+  radius sit silent until a depot or factory is built near them. Nothing is
+  deleted and nothing is refunded — sell or re-place at will.
 
 - Loading a save always restarts at the top of the saved wave; mid-wave state
   is not persisted. Cheap for the player, simple for the code.

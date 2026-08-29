@@ -93,6 +93,18 @@
   #wave-fill.is-prep { background: var(--faint); }
   #wave-fill.is-boss { background: var(--bad); }
 
+  #stores { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--edge-soft); }
+  .store {
+    display: flex; align-items: center; gap: 4px; padding: 4px 6px;
+    background: var(--panel); font-variant-numeric: tabular-nums; min-width: 0;
+  }
+  .store .glyph { width: 12px; height: 12px; }
+  .store b { font-size: 12px; font-weight: 800; }
+  .store .flow { margin-left: auto; font-size: 9px; font-weight: 700; color: var(--faint); }
+  .store .flow.up { color: var(--good); }
+  .store .flow.down { color: var(--bad); }
+  .store.is-empty b { color: var(--bad); }
+
   /* -------------------------------------------------------------- stage -- */
   #stage { position: relative; flex: 1 1 auto; min-height: 30dvh; background: var(--bg); }
   #game { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
@@ -134,11 +146,12 @@
   /* --------------------------------------------------------------- tabs -- */
   #tabs { flex: 0 0 auto; display: flex; background: var(--panel); border-top: 1px solid var(--edge); }
   #tabs button {
-    flex: 1; min-height: var(--tap); display: flex; align-items: center; justify-content: center; gap: 6px;
-    border: 0; background: none; color: var(--dim); font-weight: 600; letter-spacing: .03em;
+    flex: 1; min-width: 0; min-height: var(--tap);
+    display: flex; align-items: center; justify-content: center; gap: 5px;
+    border: 0; background: none; color: var(--dim); font-size: 13px; font-weight: 600;
     border-bottom: 2px solid transparent;
   }
-  #tabs .glyph { width: 14px; height: 14px; }
+  #tabs .glyph { width: 13px; height: 13px; }
   #tabs button[aria-selected="true"] {
     color: var(--text); border-bottom-color: var(--accent);
     background: linear-gradient(180deg, rgba(56,189,248,.12), transparent);
@@ -175,6 +188,11 @@
   .card + .card, .card + .row, .row + .card, .row + .row { margin-top: 6px; }
   .card:active { background: var(--panel-3); }
   .card.poor { opacity: .74; }
+  .chip.warn b, .chip.warn .glyph { color: var(--bad); }
+  .chip.ok b { color: var(--good); }
+  .supply { display: flex; align-items: center; gap: 4px; margin-top: 5px; font-size: 10.5px; color: var(--dim); }
+  .supply .glyph { width: 11px; height: 11px; }
+  .supply.warn { color: #fca5a5; }
   .card:disabled { opacity: .5; }
   .card.on { border-color: var(--accent); box-shadow: 0 0 0 1px rgba(56,189,248,.3), 0 0 20px rgba(56,189,248,.1); }
   .row.drag { touch-action: pan-y; }
@@ -263,6 +281,7 @@
       <div id="roster"></div>
     </div>
     <div id="wave-track"><i id="wave-fill"></i></div>
+    <div id="stores"></div>
   </header>
 
   <div id="stage">
@@ -283,6 +302,7 @@
   <nav id="tabs" role="tablist" aria-label="Panels">
     <button id="tab-build" role="tab" type="button" data-tab="build" data-icon="build" aria-controls="panel" aria-selected="true">Build</button>
     <button id="tab-upgrade" role="tab" type="button" data-tab="upgrade" data-icon="upgrade" aria-controls="panel" aria-selected="false">Upgrade</button>
+    <button id="tab-base" role="tab" type="button" data-tab="base" data-icon="base" aria-controls="panel" aria-selected="false">Base</button>
     <button id="tab-prestige" role="tab" type="button" data-tab="prestige" data-icon="core" aria-controls="panel" aria-selected="false">Prestige</button>
   </nav>
   <section id="panel" role="tabpanel" aria-labelledby="tab-build" tabindex="0"></section>
@@ -419,7 +439,7 @@ centreBtn.addEventListener('click', () => { audio.unlock(); renderer.recentre();
 
 // Drag a tower out of the build panel and onto the map. Pointer capture keeps
 // the events coming to the card even once the finger is over the canvas.
-function makeDraggable(el, type) {
+function makeDraggable(el, type, kind = 'tower') {
   const b = BALANCE.build;
   el.classList.add('drag');
 
@@ -440,7 +460,7 @@ function makeDraggable(el, type) {
     try { el.setPointerCapture(pointerId); } catch { /* not fatal */ }
     el.classList.add('dragging');
     navigator.vibrate?.(8);
-    game.startDrag(type);
+    game.startDrag(type, kind);
     moveGhost(clientX, clientY);
   }
 

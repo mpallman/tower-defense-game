@@ -3,7 +3,7 @@
 // Every stored save carries a schemaVersion. Loading an older save runs the
 // migrations in order; it never silently resets progress.
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 export const STORAGE_KEY = 'towerdefense.save';
 
 // The eleven fixed build slots that existed before free placement. Frozen on
@@ -22,6 +22,17 @@ const migrations = {
     ...data,
     upgrades: { damage: 0, rate: 0, range: 0, ...(data.upgrades || {}) },
     cores: data.cores || 0,
+  }),
+
+  // v2 -> v3: towers gained a running cost, so a save needs somewhere for
+  // buildings and stock to live. The opening depot is not added here — game.js
+  // seeds it after every restore, so there is one place that decides where it
+  // goes. The starting stock is added, or a migrated base would have a depot
+  // and nothing in it.
+  2: (data) => ({
+    ...data,
+    buildings: Array.isArray(data.buildings) ? data.buildings : [],
+    resources: { ore: 0, power: 0, ammo: 140, shells: 0, ...(data.resources || {}) },
   }),
 
   // v1 -> v2: towers moved from a slot index to free x/y coordinates.

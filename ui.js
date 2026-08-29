@@ -8,7 +8,7 @@
 
 import { BALANCE } from './balance.js';
 import { formatNumber, formatDuration } from './format.js';
-import { glyph, towerSpriteUrl, enemySpriteUrl, vaultSpriteUrl } from './icons.js';
+import { glyph, towerSpriteUrl, enemySpriteUrl, vaultSpriteUrl, buildingSpriteUrl } from './icons.js';
 
 // ------------------------------------------------------------- dom helpers --
 function el(tag, className, text) {
@@ -59,6 +59,7 @@ export function createUI({ game, audio, toast, makeDraggable }) {
     waveNote: document.getElementById('wave-note'),
     waveFill: document.getElementById('wave-fill'),
     roster: document.getElementById('roster'),
+    stores: document.getElementById('stores'),
     panel: document.getElementById('panel'),
     tabs: document.getElementById('tabs'),
     pause: document.getElementById('btn-pause'),
@@ -124,6 +125,36 @@ export function createUI({ game, audio, toast, makeDraggable }) {
   // digits stay in the same place from wave to wave.
   const bossStar = glyph('star', 'glyph boss-star');
   stats.wave.value.after(bossStar);
+
+  // ------------------------------------------------------------- stores ----
+  // One chip per resource: what you have, and whether it is filling or
+  // draining. The net flow is the number that tells you a factory has stalled.
+  const stores = {};
+  for (const [key, def] of Object.entries(BALANCE.resources)) {
+    const box = el('div', 'store');
+    const mark = glyph(key);
+    mark.style.color = def.color;
+    const value = el('b', null, '0');
+    const flow = el('span', 'flow');
+    box.append(mark, value, flow);
+    box.title = `${def.name} — ${def.blurb}`;
+    box.setAttribute('aria-label', def.name);
+    dom.stores.append(box);
+    stores[key] = { box, value, flow };
+  }
+
+  function syncStores() {
+    const flows = game.flowRates();
+    for (const key of Object.keys(BALANCE.resources)) {
+      const held = state.resources[key];
+      const net = flows[key];
+      setText(stores[key].value, formatNumber(held));
+      setText(stores[key].flow, net === 0 ? '' : `${net > 0 ? '+' : ''}${net.toFixed(1)}`);
+      stores[key].flow.classList.toggle('up', net > 0.001);
+      stores[key].flow.classList.toggle('down', net < -0.001);
+      stores[key].box.classList.toggle('is-empty', held < 1);
+    }
+  }
 
   // ------------------------------------------------------------- wave bar --
   function syncWaveBar() {
@@ -222,6 +253,8 @@ export function createUI({ game, audio, toast, makeDraggable }) {
       } },
       { icon: 'rate', title: 'shots per second', read: () => rate(game.towerStats({ type: key }).fireRate) },
       { icon: 'range', title: 'range', read: () => Math.round(game.towerStats({ type: key }).range) },
+      { icon: def.ammoType, title: `burns ${BALANCE.resources[def.ammoType].name.toLowerCase()} per shot`,
+        read: () => `${def.ammoPerShot}` },
     ]));
 
     card.append(tile(towerSpriteUrl(key, 46)), body, costTag(() => game.towerCost(key), { hint: 'hold to drag' }));
@@ -263,6 +296,14 @@ export function createUI({ game, audio, toast, makeDraggable }) {
     const range = chip('range');
     chips.append(dps.node, kills.node, range.node);
     body.append(chips);
+
+    // A tower that is not firing has to say so, or a silent turret looks like
+    // a bug rather than a supply problem.
+    const supply = el('div', 'supply');
+    const supplyMark = glyph('supply');
+    const supplyText = el('span');
+    supply.append(supplyMark, supplyText);
+    body.append(supply);
     card.append(art, body);
 
     const sell = el('button', 'row sell danger');
@@ -293,8 +334,125 @@ export function createUI({ game, audio, toast, makeDraggable }) {
       setText(kills.value, formatNumber(tower.kills));
       setText(range.value, Math.round(stats.range));
       setText(refund, `+${formatNumber(Math.floor(tower.spent * BALANCE.economy.sellRefund))}`);
+      const problem = game.towerProblem(tower);
+      setText(supplyText, problem || `supplied with ${BALANCE.resources[def.ammoType].name.toLowerCase()}`);
+      supply.classList.toggle('warn', !!problem);
     });
     return wrap;
+  }
+
+  function buildingCard(key) {
+    const def = BALANCE.buildings[key];
+    const card = el('button', 'row card building');
+    card.type = 'button';
+    card.style.setProperty('--tint', def.color);
+    card.setAttribute('aria-label', `${def.name}: ${def.blurb}`);
+
+    const body = el('div', 'body');
+    const head = el('div', 'headline');
+    head.append(el('span', 'name', def.name));
+    const owned = el('span', 'badge');
+    head.append(owned);
+    body.append(head, el('div', 'sub', def.blurb));
+
+    // What it makes, what it eats, and how far it reaches.
+    const specs = [];
+    for (const [res, amount] of Object.entries(def.produces || {})) {
+      specs.push({ icon: res, title: `makes ${BALANCE.resources[res].name}`, read: () => `+${amount}/s` });
+    }
+    for (const [res, amount] of Object.entries(def.consumes || {})) {
+      specs.push({ icon: res, title: `eats ${BALANCE.resources[res].name}`, read: () => `-${amount}/s` });
+    }
+    specs.push({ icon: 'supply', title: 'supply radius', read: () => `${def.radius}` });
+    body.append(statChips(specs));
+
+    card.append(tile(buildingSpriteUrl(key, 46)), body,
+      costTag(() => game.buildingCost(key), { hint: 'hold to drag' }));
+
+    bind(() => {
+      const count = state.buildings.filter((b) => b.type === key).length;
+      setText(owned, count ? `×${count}` : '');
+      setHidden(owned, count === 0);
+      card.classList.toggle('poor', state.credits < game.buildingCost(key));
+      card.classList.toggle('on', state.buildType === `building:${key}`);
+    });
+
+    card.addEventListener('click', () => {
+      audio.unlock();
+      const armed = `building:${key}`;
+      state.buildType = state.buildType === armed ? null : armed;
+      state.selected = null;
+      state.selectedBuilding = null;
+      sync();
+    });
+    makeDraggable(card, key, 'building');
+    return card;
+  }
+
+  // The block for a building standing on the map, mirroring the tower one.
+  function buildingSelection() {
+    const wrap = el('div', 'selection');
+    const card = el('div', 'card selected');
+    const art = tile(buildingSpriteUrl('depot', 46));
+    const body = el('div', 'body');
+    const head = el('div', 'headline');
+    const name = el('span', 'name');
+    head.append(name, el('span', 'badge live', 'selected'));
+    const sub = el('div', 'sub');
+    body.append(head, sub);
+    const status = el('div', 'supply');
+    const statusMark = glyph('supply');
+    const statusText = el('span');
+    status.append(statusMark, statusText);
+    body.append(status);
+    card.append(art, body);
+
+    const sell = el('button', 'row sell danger');
+    sell.type = 'button';
+    sell.append(glyph('sell'), el('span', 'label', 'Demolish'));
+    const refund = el('span', 'refund');
+    sell.append(refund);
+    sell.addEventListener('click', () => {
+      audio.unlock();
+      if (state.selectedBuilding == null) return;
+      const res = game.sellBuilding(state.selectedBuilding);
+      if (res.ok) { audio.play('sell'); toast(`Demolished for ${formatNumber(res.refund)} credits`); }
+      sync();
+    });
+    wrap.append(card, sell);
+
+    bind(() => {
+      const building = state.selectedBuilding != null ? game.buildingById(state.selectedBuilding) : null;
+      setHidden(wrap, !building);
+      if (!building) return;
+      const def = BALANCE.buildings[building.type];
+      setStyle(card, '--tint', def.color);
+      art.style.backgroundImage = `url(${buildingSpriteUrl(building.type, 46)})`;
+      setText(name, def.name);
+      setText(sub, `reaches ${def.radius} around itself`);
+      const starved = def.produces && building.rate < 0.999;
+      setText(statusText, starved
+        ? (building.rate <= 0 ? 'stalled — no ore to work with' : `running at ${Math.round(building.rate * 100)}%`)
+        : def.produces ? 'running' : 'relaying whatever is in range');
+      status.classList.toggle('warn', !!starved);
+      setText(refund, `+${formatNumber(Math.floor(building.spent * BALANCE.economy.sellRefund))}`);
+    });
+    return wrap;
+  }
+
+  function baseTab() {
+    const frag = document.createDocumentFragment();
+    const hint = el('p', 'hint');
+    frag.append(hint);
+    bind(() => {
+      const armed = state.buildType && state.buildType.startsWith('building:');
+      setText(hint, armed
+        ? `Now tap a spot for the ${BALANCE.buildings[state.buildType.slice(9)].name}.`
+        : 'Towers only fire inside the reach of a building that supplies them.');
+    });
+    frag.append(buildingSelection());
+    for (const key of Object.keys(BALANCE.buildings)) frag.append(buildingCard(key));
+    return frag;
   }
 
   function upgradeCard(key) {
@@ -381,9 +539,10 @@ export function createUI({ game, audio, toast, makeDraggable }) {
     frag.append(hint);
     bind(() => {
       const picked = state.selected != null ? game.towerById(state.selected) : null;
+      const armedTower = state.buildType && !state.buildType.startsWith('building:');
       setText(hint, picked
-        ? `Tap another tower to inspect it, or the map to deselect.`
-        : state.buildType
+        ? 'Tap another tower to inspect it, or the map to deselect.'
+        : armedTower
           ? `Now tap a free spot to place the ${BALANCE.towers[state.buildType].name}.`
           : 'Drag a tower onto the map, or tap it and then tap a spot.');
     });
@@ -505,7 +664,7 @@ export function createUI({ game, audio, toast, makeDraggable }) {
     return frag;
   }
 
-  const TABS = { build: buildTab, upgrade: upgradeTab, prestige: prestigeTab };
+  const TABS = { build: buildTab, base: baseTab, upgrade: upgradeTab, prestige: prestigeTab };
 
   function rebuild() {
     updaters = [];
@@ -526,6 +685,7 @@ export function createUI({ game, audio, toast, makeDraggable }) {
 
   function sync() {
     syncHud();
+    syncStores();
     syncWaveBar();
     syncControls();
     for (const fn of updaters) fn();

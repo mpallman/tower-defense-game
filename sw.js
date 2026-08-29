@@ -1,13 +1,16 @@
 // sw.js — makes the game work with no network at all, and installable to the
 // home screen. Bump CACHE on every deploy or phones will keep the old build.
 
-const CACHE = 'vault-defense-v8';
+const CACHE = 'vault-defense-v9';
 
 const SHELL = [
   './',
   './index.html',
   './audio.js',
   './balance.js',
+  './derive.js',
+  './economy.js',
+  './placement.js',
   './format.js',
   './game.js',
   './icons.js',

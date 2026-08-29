@@ -6,8 +6,8 @@
 import { BALANCE } from './balance.js';
 import { LEVEL } from './game.js';
 import {
-  PALETTE, TOWER_R, blit, polygonPath, rgba, shade,
-  bakeHull, bakeRing, bakeTowerBase, bakeTowerHead,
+  PALETTE, TOWER_R, BUILDING_R, blit, polygonPath, rgba, shade,
+  bakeHull, bakeRing, bakeTowerBase, bakeTowerHead, bakeBuilding, bakeOreNode,
 } from './sprites.js';
 
 export function createRenderer(canvas) {
@@ -26,6 +26,11 @@ export function createRenderer(canvas) {
     towerBases[key] = bakeTowerBase(def);
     towerHeads[key] = bakeTowerHead(key, def);
   }
+  const buildingArt = {};
+  for (const [key, def] of Object.entries(BALANCE.buildings)) {
+    buildingArt[key] = bakeBuilding(key, def);
+  }
+  const oreArt = bakeOreNode();
 
   // ------------------------------------------------------------- camera ---
   // The arena is bigger than the screen, so the view is a window onto it:
@@ -162,6 +167,51 @@ export function createRenderer(canvas) {
     }
   }
 
+  function drawOre(game) {
+    for (const [x, y] of LEVEL.oreNodes) {
+      const mined = game.state.buildings.some(
+        (b) => b.type === 'miner' && Math.hypot(b.x - x, b.y - y) <= BALANCE.economy.oreSnap);
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.globalAlpha = mined ? 0.35 : 1;
+      blit(ctx, oreArt);
+      ctx.restore();
+    }
+  }
+
+  function drawBuildings(game) {
+    const state = game.state;
+    for (const building of state.buildings) {
+      const def = BALANCE.buildings[building.type];
+      if (state.selectedBuilding === building.id) {
+        ctx.beginPath();
+        ctx.arc(building.x, building.y, def.radius, 0, Math.PI * 2);
+        ctx.fillStyle = rgba(def.color, 0.06);
+        ctx.fill();
+        ctx.setLineDash([4, 5]);
+        ctx.strokeStyle = rgba(def.color, 0.55);
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      ctx.save();
+      ctx.translate(building.x, building.y);
+      blit(ctx, buildingArt[building.type]);
+      // A converter with no input gets a dimmed, blinking mark rather than
+      // looking identical to one that is running.
+      if (def.produces && building.rate < 0.999) {
+        const pulse = 0.45 + Math.sin(state.time * 5) * 0.3;
+        ctx.globalAlpha = building.rate <= 0 ? pulse : 0.5;
+        ctx.beginPath();
+        ctx.arc(0, -BUILDING_R - 4, 2.4, 0, Math.PI * 2);
+        ctx.fillStyle = PALETTE.danger;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+      ctx.restore();
+    }
+  }
+
   function drawTowers(game) {
     const state = game.state;
     for (const tower of state.towers) {
@@ -183,6 +233,7 @@ export function createRenderer(canvas) {
 
       ctx.save();
       ctx.translate(tower.x, tower.y);
+      if (tower.starved) ctx.globalAlpha = 0.55;
       blit(ctx, towerBases[tower.type]);
       ctx.rotate(tower.angle);
       const kick = (tower.recoil || 0) * 2.4;
@@ -201,6 +252,23 @@ export function createRenderer(canvas) {
         ctx.globalAlpha = 1;
       }
       ctx.restore();
+
+      if (tower.starved) {
+        const pulse = 0.5 + Math.sin(state.time * 5) * 0.3;
+        ctx.save();
+        ctx.globalAlpha = pulse;
+        ctx.strokeStyle = PALETTE.danger;
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.arc(tower.x, tower.y, TOWER_R + 4, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.fillStyle = PALETTE.danger;
+        ctx.font = '800 9px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+        ctx.fillText('!', tower.x, tower.y - TOWER_R - 5);
+        ctx.restore();
+      }
     }
   }
 
@@ -397,12 +465,15 @@ export function createRenderer(canvas) {
     ctx.stroke();
     ctx.restore();
 
-    const def = BALANCE.towers[drag.type];
-    const stats = game.towerStats({ type: drag.type });
+    const building = drag.kind === 'building';
+    const def = building ? BALANCE.buildings[drag.type] : BALANCE.towers[drag.type];
+    const reach = building ? def.radius : game.towerStats({ type: drag.type }).range;
+    const gx = building && Number.isFinite(drag.snapX) ? drag.snapX : drag.x;
+    const gy = building && Number.isFinite(drag.snapY) ? drag.snapY : drag.y;
     const tint = drag.ok ? 'rgba(74,222,128,' : 'rgba(244,63,94,';
 
     ctx.beginPath();
-    ctx.arc(drag.x, drag.y, stats.range, 0, Math.PI * 2);
+    ctx.arc(gx, gy, reach, 0, Math.PI * 2);
     ctx.fillStyle = tint + '0.08)';
     ctx.fill();
     ctx.setLineDash([4, 5]);
@@ -413,17 +484,36 @@ export function createRenderer(canvas) {
 
     ctx.save();
     ctx.globalAlpha = 0.8;
-    ctx.translate(drag.x, drag.y);
-    blit(ctx, towerBases[drag.type]);
-    ctx.rotate(-Math.PI / 2);
-    blit(ctx, towerHeads[drag.type]);
+    ctx.translate(gx, gy);
+    if (building) {
+      blit(ctx, buildingArt[drag.type]);
+    } else {
+      blit(ctx, towerBases[drag.type]);
+      ctx.rotate(-Math.PI / 2);
+      blit(ctx, towerHeads[drag.type]);
+    }
     ctx.restore();
 
     ctx.beginPath();
-    ctx.arc(drag.x, drag.y, b.towerRadius + 3, 0, Math.PI * 2);
+    ctx.arc(gx, gy, (building ? BUILDING_R : b.towerRadius) + 3, 0, Math.PI * 2);
     ctx.strokeStyle = tint + '0.95)';
     ctx.lineWidth = 1.6;
     ctx.stroke();
+
+    // While placing a miner, show which nodes are still free.
+    if (building && def.needsOre) {
+      for (const [nx, ny] of LEVEL.oreNodes) {
+        const taken = game.state.buildings.some(
+          (bl) => bl.type === 'miner' && Math.hypot(bl.x - nx, bl.y - ny) <= BALANCE.economy.oreSnap);
+        ctx.beginPath();
+        ctx.arc(nx, ny, BALANCE.economy.oreSnap, 0, Math.PI * 2);
+        ctx.strokeStyle = taken ? 'rgba(244,63,94,0.45)' : 'rgba(74,222,128,0.7)';
+        ctx.lineWidth = 1.2;
+        ctx.setLineDash([3, 4]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
 
     const label = drag.ok ? def.name : drag.reason;
     if (label) {
@@ -431,11 +521,11 @@ export function createRenderer(canvas) {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'bottom';
       const w = ctx.measureText(label).width + 10;
-      const ly = drag.y - b.towerRadius - 6;
+      const ly = gy - b.towerRadius - 6;
       ctx.fillStyle = 'rgba(7,11,18,0.85)';
-      ctx.fillRect(drag.x - w / 2, ly - 14, w, 15);
+      ctx.fillRect(gx - w / 2, ly - 14, w, 15);
       ctx.fillStyle = drag.ok ? '#4ade80' : '#fca5a5';
-      ctx.fillText(label, drag.x, ly);
+      ctx.fillText(label, gx, ly);
     }
   }
 
@@ -545,7 +635,9 @@ export function createRenderer(canvas) {
     drawArena(view);
     drawPath(game.state.time);
     drawSpawnGate(game.state.time);
+    drawOre(game);
     drawVault(game);
+    drawBuildings(game);
     drawTowers(game);
     drawEnemies(game);
     drawProjectiles(game);

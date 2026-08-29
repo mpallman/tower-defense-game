@@ -25,15 +25,21 @@ Tone: cold, clean, readable at a glance on a small screen.
 ## Core loop
 
 1. Waves spawn automatically and walk a fixed path.
-2. Towers fire automatically. Kills drop currency.
-3. Player spends currency on new towers and on upgrades (damage, range, rate).
+2. Towers fire automatically, spending a resource per shot. A tower with no
+   supply line, or an empty pool, does not fire at all.
+3. Player spends currency on new towers, on the buildings that supply them,
+   and on upgrades (damage, range, rate).
 4. Towers are placed freely anywhere off the path, by dragging them out of the
    build panel. No fixed slots. The arena is larger than the screen: one finger
    pans, two pinch to zoom, and a touch that goes nowhere is a tap.
-5. Every N waves a boss appears; failure resets to wave 1 keeping upgrades.
-6. Prestige converts lifetime earnings into a permanent multiplier and wipes
+5. Buildings make and move the resources. Miners must sit on an ore node;
+   factories turn ore into rounds and shells; power plants need no input. Stock
+   is global, but a tower only draws from a building whose radius covers it, so
+   layout is the puzzle. A run opens with one free, stocked depot by the vault.
+6. Every N waves a boss appears; failure resets to wave 1 keeping upgrades.
+7. Prestige converts lifetime earnings into a permanent multiplier and wipes
    the run.
-7. Closing the game accrues offline income, capped at 8 hours. This is a
+8. Closing the game accrues offline income, capped at 8 hours. This is a
    convenience for picking a session back up, not the core of the game.
 
 ## Tech stack
@@ -133,6 +139,9 @@ just did unless I ask.
     index.html            entry point, DOM chrome, stylesheet, input wiring
     game.js               simulation, state, systems, level geometry
     balance.js            the BALANCE object — every tunable number
+    derive.js             pure numbers read off BALANCE and state
+    placement.js          where a thing may stand, and building or selling it
+    economy.js            resource stock, production, and who may draw on it
     sprites.js            procedural sprite baking, shared by canvas and DOM
     render.js             the play field: background, path, entities, effects
     icons.js              DOM-facing art: sprite tiles and inline SVG glyphs

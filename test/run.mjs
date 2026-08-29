@@ -108,13 +108,25 @@ async function main() {
   section('simulation');
   const sim = await page.evaluate(() => {
     const { game } = globalThis.__td;
-    game.state.credits = 5_000;
+    game.state.credits = 50_000;
+    // Towers now need a supply line, so this builds a working base: depots to
+    // reach the perimeter, a miner on a node, and a factory turning that ore
+    // into rounds. Without the economy behind them the towers never fire.
+    const support = [
+      game.buildBuilding(110, 120, 'depot'),
+      game.buildBuilding(240, 222, 'depot'),
+      game.buildBuilding(250, -105, 'miner'),
+      game.buildBuilding(200, 120, 'ammofab'),
+    ];
     const spots = [[30, 120], [150, 120], [240, 120], [150, 222]];
     const built = spots.map(([x, y], i) => game.buildTower(x, y, i === 3 ? 'laser' : 'turret'));
     const before = game.state.wave;
     game.fastForward(600); // ten minutes of game time
     return {
       built: built.every((b) => b.ok),
+      support: support.every((b) => b.ok),
+      supportWhy: support.map((b) => b.reason || 'ok').join(', '),
+      ammoLeft: game.state.resources.ammo,
       before,
       after: game.state.wave,
       kills: game.state.kills,
@@ -124,9 +136,12 @@ async function main() {
       finite: Number.isFinite(game.state.credits) && Number.isFinite(game.state.vaultHp),
     };
   });
+  check('a support base can be built', sim.support, sim.supportWhy);
   check('towers can be built', sim.built);
   check('waves advance while fast-forwarding', sim.after > sim.before, `wave ${sim.before} -> ${sim.after}`);
   check('enemies die and pay out', sim.kills > 0 && sim.credits > 0, `${sim.kills} kills`);
+  check('the factory kept the turrets fed through ten minutes', sim.ammoLeft > 0,
+    `${sim.ammoLeft.toFixed(1)} ammo left`);
   check('state stays finite', sim.finite);
   check('fast-forward leaves no cosmetic entities', sim.fx === 0);
 
@@ -477,13 +492,154 @@ async function main() {
 
   await page.evaluate(() => { globalThis.__td.game.hardReset(); globalThis.__td.renderPanel(); });
 
+  // --- economy -------------------------------------------------------------
+  section('economy');
+  const supply = await page.evaluate(() => {
+    const { game } = globalThis.__td;
+    game.hardReset();
+    game.state.credits = 50_000;
+
+    // Far from the opening depot, so nothing can reach it.
+    const lonely = game.buildTower(-100, 300, 'turret');
+    game.state.phase = 'wave';
+    game.state.queue = ['grunt'];
+    for (let i = 0; i < 40 && !game.state.enemies.length; i++) game.advanceBy(0.5);
+    game.advanceBy(4);
+    const tower = game.towerById(lonely.id);
+    const before = { starved: !!tower.starved, problem: game.towerProblem(tower) };
+
+    // A depot in reach turns it back on.
+    const relay = game.buildBuilding(-60, 250, 'depot');
+    game.advanceBy(2);
+    const after = { starved: !!tower.starved, problem: game.towerProblem(tower) };
+
+    // Drain the pool and it stops again, for a different reason.
+    game.state.resources.ammo = 0;
+    game.advanceBy(2);
+    const dry = { starved: !!tower.starved, problem: game.towerProblem(tower) };
+    return { relay: relay.ok, before, after, dry };
+  });
+  check('a tower out of reach of any supply does not fire',
+    supply.before.starved && supply.before.problem === 'no supply line', JSON.stringify(supply.before));
+  check('a depot in range brings it back',
+    supply.relay && !supply.after.starved && supply.after.problem === null, JSON.stringify(supply.after));
+  check('an empty pool stops it for a different reason',
+    supply.dry.starved && supply.dry.problem === 'out of ammo', JSON.stringify(supply.dry));
+
+  const mining = await page.evaluate(() => {
+    const { game, LEVEL } = globalThis.__td;
+    game.hardReset();
+    game.state.credits = 50_000;
+    const [nx, ny] = LEVEL.oreNodes[0];
+    return {
+      offNode: game.buildBuilding(nx + 90, ny, 'miner').reason,
+      onNode: game.buildBuilding(nx + 8, ny - 6, 'miner'),
+      snapped: game.state.buildings.filter((b) => b.type === 'miner').map((b) => [b.x, b.y]),
+      twice: game.buildBuilding(nx, ny, 'miner').reason,
+      node: [nx, ny],
+    };
+  });
+  check('a miner must stand on an ore node', mining.offNode === 'must sit on an ore node', mining.offNode);
+  check('a miner snaps onto the node it was dropped near',
+    mining.onNode.ok && mining.snapped.length === 1
+    && mining.snapped[0][0] === mining.node[0] && mining.snapped[0][1] === mining.node[1],
+    JSON.stringify(mining.snapped));
+  check('one node takes one miner', mining.twice === 'that node is already mined', mining.twice);
+
+  const chain = await page.evaluate(() => {
+    const { game, LEVEL } = globalThis.__td;
+    game.hardReset();
+    game.state.credits = 50_000;
+    game.state.resources.ore = 0;
+
+    // A factory with nothing to convert stalls rather than making ore appear.
+    const ammoBefore = game.state.resources.ammo;
+    const fab = game.buildBuilding(-100, 300, 'ammofab');
+    game.advanceBy(3);
+    const starved = { rate: game.buildingById(fab.id).rate, made: game.state.resources.ammo - ammoBefore };
+
+    // Give it a miner and the chain runs.
+    const [nx, ny] = LEVEL.oreNodes[0];
+    game.buildBuilding(nx, ny, 'miner');
+    game.advanceBy(30);
+    const running = {
+      rate: game.buildingById(fab.id).rate,
+      ore: game.state.resources.ore,
+      ammo: game.state.resources.ammo,
+    };
+    // A power plant needs no input at all.
+    game.buildBuilding(-100, 380, 'plant');
+    game.advanceBy(10);
+    return { starved, running, power: game.state.resources.power, flows: game.flowRates() };
+  });
+  check('a factory with no ore stalls instead of inventing it',
+    chain.starved.rate === 0 && chain.starved.made === 0, JSON.stringify(chain.starved));
+  check('a miner feeding a factory produces ammo',
+    chain.running.rate > 0.99 && chain.running.ammo > 10, JSON.stringify(chain.running));
+  check('a power plant needs no input', chain.power > 10, `${chain.power.toFixed(1)} power`);
+  check('the panel reports net flow, production minus consumption',
+    Math.abs(chain.flows.ore - 0.2) < 0.001 && Math.abs(chain.flows.ammo - 1.7) < 0.001,
+    JSON.stringify(chain.flows));
+
+  const stockCap = await page.evaluate(() => {
+    const { game, BALANCE } = globalThis.__td;
+    game.hardReset();
+    game.state.credits = 50_000;
+    game.buildBuilding(-100, 380, 'plant');
+    game.advanceBy(4000);
+    return { power: game.state.resources.power, cap: BALANCE.resources.power.cap };
+  });
+  check('stock stops at its cap', stockCap.power === stockCap.cap,
+    `${stockCap.power} vs ${stockCap.cap}`);
+
+  const openingBase = await page.evaluate(() => {
+    const { game, BALANCE } = globalThis.__td;
+    game.hardReset();
+    const depots = game.state.buildings.filter((b) => b.type === 'depot');
+    const near = game.buildTower(210, 430, 'turret');
+    game.state.phase = 'wave';
+    game.state.queue = ['grunt'];
+    for (let i = 0; i < 40 && !game.state.enemies.length; i++) game.advanceBy(0.5);
+    game.advanceBy(6);
+    return {
+      depots: depots.length,
+      free: depots.every((d) => d.spent === 0),
+      ammo: BALANCE.economy.startingStock.ammo,
+      firing: near.ok && !game.towerById(near.id).starved,
+    };
+  });
+  check('a run opens with one free, stocked depot',
+    openingBase.depots === 1 && openingBase.free && openingBase.ammo > 0, JSON.stringify(openingBase));
+  check('a turret built by the vault fires straight away', openingBase.firing);
+
+  const afterPrestige = await page.evaluate(() => {
+    const { game } = globalThis.__td;
+    game.hardReset();
+    game.state.credits = 50_000;
+    game.buildBuilding(-100, 380, 'plant');
+    game.state.runEarned = 10_000_000;
+    const res = game.prestige();
+    return {
+      ok: res.ok,
+      buildings: game.state.buildings.map((b) => b.type),
+      ammo: game.state.resources.ammo,
+    };
+  });
+  check('prestige wipes the base but leaves the opening depot',
+    afterPrestige.ok && afterPrestige.buildings.length === 1
+    && afterPrestige.buildings[0] === 'depot' && afterPrestige.ammo > 0,
+    JSON.stringify(afterPrestige));
+
   // --- save / reload -----------------------------------------------------  // --- save / reload -----------------------------------------------------
   section('save and reload');
   const saved = await page.evaluate(() => {
-    const { game } = globalThis.__td;
+    const { game, LEVEL } = globalThis.__td;
     game.state.credits = 10_000;
     game.buildTower(30, 120, 'turret');
     game.buildTower(240, 222, 'laser');
+    game.buildBuilding(110, 120, 'depot');
+    game.buildBuilding(LEVEL.oreNodes[1][0], LEVEL.oreNodes[1][1], 'miner');
+    game.state.resources.ore = 42;
     game.state.enemies.length = 0;
     game.save();
     game.save = () => true; // stop the page from overwriting the save on unload
@@ -498,6 +654,14 @@ async function main() {
     mismatched.map((f) => `${f}: ${saved[f]} -> ${reloaded[f]}`).join(', '));
   check('towers survive a reload', reloaded.towers.length === saved.towers.length,
     `${saved.towers.length} -> ${reloaded.towers.length}`);
+  check('buildings survive a reload',
+    reloaded.buildings.length === saved.buildings.length
+    && reloaded.buildings.every((b, i) => b.type === saved.buildings[i].type
+      && Math.abs(b.x - saved.buildings[i].x) < 1e-6),
+    `${saved.buildings.length} -> ${reloaded.buildings.length}`);
+  check('resource stock survives a reload',
+    Math.abs(reloaded.resources.ore - saved.resources.ore) < 1e-6,
+    `${saved.resources.ore} -> ${reloaded.resources.ore}`);
   check('upgrades survive a reload',
     JSON.stringify(reloaded.upgrades) === JSON.stringify(saved.upgrades));
 
@@ -565,6 +729,42 @@ async function main() {
   check('slot-based towers become free-placed coordinates',
     migrated.towers[0].x === 30 && migrated.towers[0].y === 120 && migrated.towers[0].slot === undefined,
     JSON.stringify(migrated.towers[0]));
+  check('a save from before supply lines arrives with a stocked depot',
+    migrated.buildings.length === 1 && migrated.buildings[0].type === 'depot' && migrated.resources.ammo > 0,
+    JSON.stringify({ buildings: migrated.buildings, ammo: migrated.resources.ammo }));
+
+  // A v2 save — towers placed freely, but no buildings and no stock.
+  await page.evaluate(() => {
+    localStorage.setItem('towerdefense.save', JSON.stringify({
+      schemaVersion: 2,
+      savedAt: Date.now(),
+      data: {
+        wave: 9, credits: 500, vaultHp: 20, cores: 3, lifetimeEarned: 9999,
+        upgrades: { damage: 2, rate: 1, range: 0 },
+        towers: [{ x: 210, y: 430, type: 'turret', spent: 30, kills: 12 }],
+      },
+    }));
+    globalThis.__td.game.save = () => true;
+  });
+  await page.reload({ waitUntil: 'load' });
+  await page.waitForFunction(() => !!globalThis.__td);
+  const fromV2 = await page.evaluate(() => {
+    const { game } = globalThis.__td;
+    const snap = game.snapshot();
+    return {
+      wave: snap.wave, cores: snap.cores, upgrades: snap.upgrades,
+      towers: snap.towers.length, kills: snap.towers[0].kills,
+      buildings: snap.buildings.map((b) => b.type),
+      ammo: snap.resources.ammo,
+      // the migrated tower sits by the vault, so the opening depot reaches it
+      supplied: game.towerProblem(game.state.towers[0]) === null,
+    };
+  });
+  check('a v2 save keeps its run intact',
+    fromV2.wave === 9 && fromV2.cores === 3 && fromV2.upgrades.damage === 2
+    && fromV2.towers === 1 && fromV2.kills === 12, JSON.stringify(fromV2));
+  check('a v2 save gains a depot and stock rather than silent towers',
+    fromV2.buildings.length === 1 && fromV2.ammo > 0 && fromV2.supplied, JSON.stringify(fromV2));
 
   const corrupt = await page.evaluate(async () => {
     localStorage.setItem('towerdefense.save', '{not json');
@@ -667,7 +867,7 @@ async function main() {
   check('every tower has a card with its own sprite', cards.length === 3
     && cards.every((c) => c.art.startsWith('url("data:image/png')),
     cards.map((c) => `${c.name} ${c.art}`).join(' | '));
-  check('tower cards show stats and a price', cards.every((c) => c.chips === 3 && c.cost.length > 0),
+  check('tower cards show stats and a price', cards.every((c) => c.chips === 4 && c.cost.length > 0),
     cards.map((c) => `${c.name} ${c.cost}`).join(' | '));
 
   const roster = await page.evaluate(() => {
@@ -765,6 +965,19 @@ async function main() {
   check('enemies are on the field mid-wave', combat.enemies > 0, `${combat.enemies} enemies, wave ${combat.wave}`);
   await page.waitForTimeout(120);
   await page.screenshot({ path: path.join(SHOTS, 'phone-combat.png') });
+  await page.evaluate(() => {
+    const { game, ui, LEVEL } = globalThis.__td;
+    game.state.credits = 4_000;
+    game.buildBuilding(110, 120, 'depot');
+    game.buildBuilding(LEVEL.oreNodes[2][0], LEVEL.oreNodes[2][1], 'miner');
+    game.buildBuilding(200, 120, 'ammofab');
+    game.buildBuilding(-60, 250, 'plant');
+    game.state.selectedBuilding = game.state.buildings[1].id;
+    game.advanceBy(20);
+    ui.setTab('base');
+  });
+  await page.waitForTimeout(200);
+  await page.screenshot({ path: path.join(SHOTS, 'phone-base.png') });
   await page.evaluate(() => globalThis.__td.setTab('upgrade'));
   await page.waitForTimeout(150);
   await page.screenshot({ path: path.join(SHOTS, 'phone-upgrade.png') });

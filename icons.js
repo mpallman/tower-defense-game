@@ -14,7 +14,7 @@
 // Nothing here downloads anything: both kinds are generated at runtime.
 
 import { BALANCE } from './balance.js';
-import { bakeHull, bakeRing, bakeTowerBase, bakeTowerHead, blit } from './sprites.js';
+import { bakeHull, bakeRing, bakeTowerBase, bakeTowerHead, bakeBuilding, bakeOreNode, blit } from './sprites.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -23,6 +23,8 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 const tileCache = new Map();
 const towerLayers = new Map();
 const enemyLayers = new Map();
+const buildingLayers = new Map();
+let oreLayer = null;
 
 function pixelRatio() {
   return Math.min(globalThis.devicePixelRatio || 1, 3);
@@ -87,6 +89,27 @@ export function enemySpriteUrl(key, px = 26) {
       ctx.globalAlpha = 1;
       blit(ctx, parts.hull);
     }));
+  }
+  return tileCache.get(id);
+}
+
+// A building, as it stands on the ground.
+export function buildingSpriteUrl(key, px = 44) {
+  const id = `building:${key}:${px}`;
+  if (!tileCache.has(id)) {
+    if (!buildingLayers.has(key)) buildingLayers.set(key, bakeBuilding(key, BALANCE.buildings[key]));
+    const art = buildingLayers.get(key);
+    tileCache.set(id, paintTile(px, art.radius + 1, (ctx) => blit(ctx, art)));
+  }
+  return tileCache.get(id);
+}
+
+// An ore node, for the miner's card and the resource strip.
+export function oreSpriteUrl(px = 26) {
+  const id = `ore:${px}`;
+  if (!tileCache.has(id)) {
+    if (!oreLayer) oreLayer = bakeOreNode();
+    tileCache.set(id, paintTile(px, oreLayer.radius + 1, (ctx) => blit(ctx, oreLayer)));
   }
   return tileCache.get(id);
 }
@@ -158,6 +181,12 @@ const GLYPHS = {
   upgrade: { d: ['M12 20V6.4', 'M6.4 12 12 6.4l5.6 5.6', 'M6.4 3.8h11.2'] },
   clock:   { d: ['M12 3.6a8.4 8.4 0 1 0 0 16.8 8.4 8.4 0 0 0 0-16.8z', 'M12 7.4V12l3.2 2'] },
   recentre:{ d: ['M4.4 8.6V4.4h4.2', 'M15.4 4.4h4.2v4.2', 'M19.6 15.4v4.2h-4.2', 'M8.6 19.6H4.4v-4.2', 'M12 9.6a2.4 2.4 0 1 0 0 4.8 2.4 2.4 0 0 0 0-4.8z'] },
+  ore:     { d: ['M12 3.2 16.4 9.4 12 20.8 7.6 9.4z', 'M7.6 9.4h8.8', 'M12 3.2v17.6'] },
+  power:   { d: ['M13.4 2.8 5.6 13.2h5l-1 8 7.8-10.4h-5z'] },
+  ammo:    { d: ['M9 21.2V9.4L12 3l3 6.4v11.8z', 'M9 13.6h6'] },
+  shells:  { d: ['M8 21V11.4C8 7.6 12 3 12 3s4 4.6 4 8.4V21z', 'M8 15.8h8', 'M10.6 21v-2.4h2.8V21'] },
+  supply:  { d: ['M12 10.2a1.8 1.8 0 1 0 0 3.6 1.8 1.8 0 0 0 0-3.6z', 'M7.8 7.8a6 6 0 0 0 0 8.4', 'M16.2 7.8a6 6 0 0 1 0 8.4', 'M4.8 4.8a10.2 10.2 0 0 0 0 14.4', 'M19.2 4.8a10.2 10.2 0 0 1 0 14.4'] },
+  base:    { d: ['M3.4 20.4h17.2', 'M5.4 20.4V9.6L12 5.2l6.6 4.4v10.8', 'M10 20.4v-5h4v5'] },
   drag:    { d: ['M12 3.6v16.8', 'M8.6 6.8 12 3.6l3.4 3.2', 'M8.6 17.2 12 20.4l3.4-3.2', 'M6.6 12h10.8'] },
 };
 

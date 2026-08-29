@@ -362,3 +362,129 @@ export function bakeTowerHead(key, def) {
     }
   });
 }
+
+// ---------------------------------------------------------- building art ---
+// Buildings must not be mistaken for towers at a glance, so they are squares
+// with a roof, where every tower is an octagon with a barrel. Silhouette does
+// the work; the icon inside says which kind it is.
+export const BUILDING_R = BALANCE.economy.buildingRadius;
+
+function roofIcon(ctx, key, r, tint) {
+  ctx.strokeStyle = tint;
+  ctx.lineWidth = 1.4;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  if (key === 'miner') {                       // a pick over a heap
+    ctx.beginPath();
+    ctx.moveTo(-r * 0.4, r * 0.35);
+    ctx.lineTo(r * 0.4, -r * 0.4);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(r * 0.1, -r * 0.55);
+    ctx.quadraticCurveTo(r * 0.55, -r * 0.3, r * 0.55, r * 0.05);
+    ctx.stroke();
+    return;
+  }
+  if (key === 'plant') {                       // a bolt
+    ctx.beginPath();
+    ctx.moveTo(r * 0.22, -r * 0.6);
+    ctx.lineTo(-r * 0.3, r * 0.05);
+    ctx.lineTo(r * 0.05, r * 0.05);
+    ctx.lineTo(-r * 0.16, r * 0.62);
+    ctx.lineTo(r * 0.36, -r * 0.05);
+    ctx.lineTo(r * 0.02, -r * 0.05);
+    ctx.closePath();
+    ctx.fillStyle = tint;
+    ctx.fill();
+    return;
+  }
+  if (key === 'ammofab' || key === 'shellfab') {   // a round, pointed or fat
+    const w = key === 'shellfab' ? r * 0.34 : r * 0.22;
+    ctx.beginPath();
+    ctx.moveTo(0, -r * 0.62);
+    ctx.lineTo(w, -r * 0.2);
+    ctx.lineTo(w, r * 0.5);
+    ctx.lineTo(-w, r * 0.5);
+    ctx.lineTo(-w, -r * 0.2);
+    ctx.closePath();
+    ctx.fillStyle = tint;
+    ctx.fill();
+    if (key === 'shellfab') {
+      ctx.strokeStyle = 'rgba(6,10,18,0.65)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(-w, r * 0.16);
+      ctx.lineTo(w, r * 0.16);
+      ctx.stroke();
+    }
+    return;
+  }
+  // depot: crates
+  ctx.fillStyle = tint;
+  for (const [cx, cy, cs] of [[-r * 0.3, r * 0.1, r * 0.3], [r * 0.28, r * 0.16, r * 0.24], [-r * 0.02, -r * 0.34, r * 0.26]]) {
+    ctx.fillRect(cx - cs, cy - cs, cs * 2, cs * 2);
+  }
+}
+
+export function bakeBuilding(key, def) {
+  return bake(BUILDING_R + 2, (ctx, r) => {
+    ctx.beginPath();
+    ctx.ellipse(0, r * 0.42, r * 0.95, r * 0.42, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.fill();
+
+    const side = r * 0.82;
+    const body = ctx.createLinearGradient(0, -side, 0, side);
+    body.addColorStop(0, shade(def.color, -35));
+    body.addColorStop(0.55, shade(def.color, -85));
+    body.addColorStop(1, shade(def.color, -125));
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(-side, -side, side * 2, side * 2, 3);
+    else ctx.rect(-side, -side, side * 2, side * 2);
+    ctx.fillStyle = body;
+    ctx.fill();
+    ctx.lineWidth = 1.3;
+    ctx.strokeStyle = shade(def.color, 50);
+    ctx.stroke();
+
+    // corner bolts, so it reads as built rather than drawn
+    ctx.fillStyle = rgba('#ffffff', 0.22);
+    for (const sx of [-1, 1]) {
+      for (const sy of [-1, 1]) {
+        ctx.beginPath();
+        ctx.arc(sx * side * 0.74, sy * side * 0.74, 0.9, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    roofIcon(ctx, key, r, shade(def.color, 90));
+  });
+}
+
+// An ore node: a scatter of crystals in the ground, drawn once.
+export function bakeOreNode() {
+  return bake(14, (ctx, r) => {
+    ctx.beginPath();
+    ctx.ellipse(0, r * 0.3, r * 0.92, r * 0.42, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.fill();
+    const shards = [[0, -0.25, 0.5], [-0.5, 0.12, 0.34], [0.48, 0.08, 0.38]];
+    for (const [dx, dy, size] of shards) {
+      const x = dx * r, y = dy * r, h = size * r;
+      ctx.beginPath();
+      ctx.moveTo(x, y - h);
+      ctx.lineTo(x + h * 0.62, y + h * 0.32);
+      ctx.lineTo(x, y + h * 0.62);
+      ctx.lineTo(x - h * 0.62, y + h * 0.32);
+      ctx.closePath();
+      const grad = ctx.createLinearGradient(x, y - h, x, y + h);
+      grad.addColorStop(0, '#d6d3d1');
+      grad.addColorStop(1, '#57534e');
+      ctx.fillStyle = grad;
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(231,229,228,0.7)';
+      ctx.lineWidth = 0.7;
+      ctx.stroke();
+    }
+  });
+}

@@ -25,6 +25,12 @@ export const BALANCE = {
   economy: {
     startingCredits: 45,
     sellRefund: 0.6,     // fraction of money spent returned when selling a tower
+    // The start has to be playable before you have built anything, so the run
+    // opens with a depot by the vault and rounds already in it.
+    startingStock: { ore: 0, power: 0, ammo: 140, shells: 0 },
+    startingDepot: [252, 470],   // world coords, near the vault and off the path
+    oreSnap: 18,                 // how close a miner must sit to a node's centre
+    buildingRadius: 13,          // footprint, as towers have towerRadius
   },
 
   vault: {
@@ -63,12 +69,14 @@ export const BALANCE = {
       name: 'Turret', blurb: 'Steady single-target fire.',
       cost: 30, costGrowth: 1.5,
       damage: 6, range: 80, fireRate: 1.5, projectileSpeed: 260,
+      ammoType: 'ammo', ammoPerShot: 1,
       color: '#38bdf8',
     },
     laser: {
       name: 'Laser', blurb: 'Fast beam, short range.',
       cost: 110, costGrowth: 1.55,
       damage: 2.6, range: 66, fireRate: 7, beam: true,
+      ammoType: 'power', ammoPerShot: 0.22,
       color: '#a3e635',
     },
     mortar: {
@@ -76,6 +84,57 @@ export const BALANCE = {
       cost: 260, costGrowth: 1.6,
       damage: 26, range: 120, fireRate: 0.55, projectileSpeed: 150,
       splashRadius: 34, splashFalloff: 0.5,
+      ammoType: 'shells', ammoPerShot: 1,
+      color: '#fb923c',
+    },
+  },
+
+  // What towers burn. Stock is global; the map decides who may draw on it.
+  resources: {
+    ore:    { name: 'Ore',    blurb: 'dug out of a node',     color: '#a8a29e', cap: 400 },
+    power:  { name: 'Power',  blurb: 'runs the lasers',       color: '#facc15', cap: 400 },
+    ammo:   { name: 'Ammo',   blurb: 'turret rounds',         color: '#38bdf8', cap: 400 },
+    shells: { name: 'Shells', blurb: 'mortar shells',         color: '#fb923c', cap: 150 },
+  },
+
+  // Buildings produce, convert and distribute. `supplies` is the reach part:
+  // a tower only fires if some building that supplies its resource has it
+  // inside `radius`. Producing and distributing are separate jobs on purpose —
+  // that is what makes where you put a thing matter.
+  buildings: {
+    depot: {
+      name: 'Depot', blurb: 'Relays every resource to whatever is in range.',
+      cost: 45, costGrowth: 1.35, radius: 115,
+      supplies: ['ore', 'power', 'ammo', 'shells'],
+      color: '#94a3b8',
+    },
+    miner: {
+      name: 'Miner', blurb: 'Must stand on an ore node.',
+      cost: 70, costGrowth: 1.4, radius: 80,
+      needsOre: true,
+      produces: { ore: 0.9 },
+      supplies: ['ore'],
+      color: '#a8a29e',
+    },
+    plant: {
+      name: 'Power plant', blurb: 'Needs no input. Runs lasers in range.',
+      cost: 140, costGrowth: 1.45, radius: 105,
+      produces: { power: 2.2 },
+      supplies: ['power'],
+      color: '#facc15',
+    },
+    ammofab: {
+      name: 'Ammo factory', blurb: 'Turns ore into turret rounds.',
+      cost: 120, costGrowth: 1.42, radius: 105,
+      consumes: { ore: 0.7 }, produces: { ammo: 1.7 },
+      supplies: ['ammo'],
+      color: '#38bdf8',
+    },
+    shellfab: {
+      name: 'Shell fab', blurb: 'Turns ore into mortar shells.',
+      cost: 300, costGrowth: 1.5, radius: 105,
+      consumes: { ore: 1.2 }, produces: { shells: 0.55 },
+      supplies: ['shells'],
       color: '#fb923c',
     },
   },
