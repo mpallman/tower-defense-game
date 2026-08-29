@@ -109,7 +109,8 @@ async function main() {
   const sim = await page.evaluate(() => {
     const { game } = globalThis.__td;
     game.state.credits = 5_000;
-    const built = [0, 1, 2, 4].map((slot, i) => game.buildTower(slot, i === 3 ? 'laser' : 'turret'));
+    const spots = [[30, 120], [150, 120], [240, 120], [150, 222]];
+    const built = spots.map(([x, y], i) => game.buildTower(x, y, i === 3 ? 'laser' : 'turret'));
     const before = game.state.wave;
     game.fastForward(600); // ten minutes of game time
     return {
@@ -136,7 +137,12 @@ async function main() {
     const t0 = performance.now();
     game.state.credits = 1e12;
     for (const key of ['damage', 'rate', 'range']) for (let i = 0; i < 60; i++) game.buyUpgrade(key);
-    for (let s = 0; s < 11; s++) if (game.slotIsFree(s)) game.buildTower(s, s % 3 === 0 ? 'mortar' : 'turret');
+    let placed = 0;
+    for (let x = 20; x <= 340 && placed < 14; x += 28) {
+      for (let y = 20; y <= 460 && placed < 14; y += 28) {
+        if (game.canPlaceAt(x, y).ok && game.buildTower(x, y, placed % 3 === 0 ? 'mortar' : 'turret').ok) placed += 1;
+      }
+    }
     game.fastForward(60 * 60 * 6); // six hours of game time
     return {
       ms: performance.now() - t0,
@@ -155,30 +161,111 @@ async function main() {
   check('deep run produced no console errors', errors.length === 0, errors.join(' | '));
   console.log(`       reached wave ${deep.wave} (best ${deep.best}) in ${Math.round(deep.ms)} ms`);
 
-  // --- tapping -----------------------------------------------------------
-  section('tap damage');
-  const tap = await page.evaluate(() => {
+  // --- placement rules ---------------------------------------------------
+  section('placement');
+  const place = await page.evaluate(() => {
     const { game } = globalThis.__td;
-    game.state.enemies.length = 0;
-    game.state.phase = 'wave';
-    game.state.queue = [];
-    game.advanceBy(0.1);
-    game.state.enemies.push({
-      id: 999999, type: 'grunt', hp: 1e9, maxHp: 1e9, speed: 0, bounty: 1,
-      radius: 8, dist: 10, x: 100, y: 70, flash: 0, spin: 0,
-    });
-    const e = game.state.enemies[game.state.enemies.length - 1];
-    const before = e.hp;
-    const res = game.tapAt(100, 70);
-    return { kind: res.kind, dealt: before - e.hp, damage: res.damage };
+    game.hardReset();
+    game.state.credits = 100_000;
+    const onPath = game.canPlaceAt(150, 70);
+    const offMap = game.canPlaceAt(2, 2);
+    const nearVault = game.canPlaceAt(180, 428);
+    const first = game.buildTower(150, 120, 'turret');
+    const stacked = game.buildTower(152, 124, 'turret');
+    const apart = game.buildTower(200, 120, 'turret');
+    const poor = (() => {
+      game.state.credits = 0;
+      return game.buildTower(30, 120, 'turret');
+    })();
+    return {
+      onPath: onPath.reason, offMap: offMap.reason, nearVault: nearVault.reason,
+      first: first.ok, stacked: stacked.reason, apart: apart.ok, poor: poor.reason,
+      towers: game.state.towers.length,
+    };
   });
-  check('tapping an enemy deals damage', tap.kind === 'enemy' && tap.dealt > 0,
-    `dealt ${Math.round(tap.dealt)}`);
+  check('towers cannot be built on the path', place.onPath === 'too close to the path');
+  check('towers cannot be built off the map', place.offMap === 'off the map');
+  check('towers cannot smother the vault', !!place.nearVault, place.nearVault);
+  check('a legal spot builds', place.first && place.apart && place.towers === 2);
+  check('towers cannot be stacked', place.stacked === 'too close to another tower');
+  check('an unaffordable tower is refused', place.poor === 'not enough credits');
 
-  // --- save / reload -----------------------------------------------------
+  // --- drag to place -----------------------------------------------------
+  section('drag to place');
+  await page.evaluate(() => {
+    const { game } = globalThis.__td;
+    game.hardReset();
+    game.state.credits = 2_000;
+    globalThis.__td.setTab('build');
+  });
+  await page.waitForTimeout(120);
+
+  const towerRow = page.locator('#panel .row', { hasText: 'Turret' }).first();
+  const rowBox = await towerRow.boundingBox();
+  const canvasBox = await page.locator('#game').boundingBox();
+
+  // drop it on the path first: must be refused
+  const onPathPoint = await page.evaluate(() => {
+    const { renderer } = globalThis.__td;
+    const rect = document.getElementById('game').getBoundingClientRect();
+    const s = renderer.scale;
+    const offX = (rect.width - 360 * s) / 2;
+    const offY = (rect.height - 480 * s) / 2;
+    // aim low so the ghost, which floats above the finger, lands on the path
+    const grab = globalThis.__td.BALANCE.build.dragGrabOffset;
+    return { x: rect.left + offX + 150 * s, y: rect.top + offY + (70 - grab) * s };
+  });
+  await page.mouse.move(rowBox.x + rowBox.width / 2, rowBox.y + rowBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(onPathPoint.x, onPathPoint.y, { steps: 12 });
+  const dragging = await page.evaluate(() => {
+    const d = globalThis.__td.game.state.drag;
+    return d ? { ok: d.ok, reason: d.reason } : null;
+  });
+  await page.mouse.up();
+  const afterBadDrop = await page.evaluate(() => globalThis.__td.game.state.towers.length);
+  check('the drag preview reports an illegal spot', dragging && !dragging.ok, dragging && dragging.reason);
+  check('dropping on the path builds nothing', afterBadDrop === 0);
+
+  // now a legal spot. The panel changed after the last drop, so re-find the row.
+  await page.evaluate(() => { globalThis.__td.game.state.selected = null; globalThis.__td.renderPanel(); });
+  await page.waitForTimeout(80);
+  const rowBox2 = await page.locator('#panel .row', { hasText: 'Turret' }).first().boundingBox();
+  const goodPoint = await page.evaluate(() => {
+    const { renderer } = globalThis.__td;
+    const rect = document.getElementById('game').getBoundingClientRect();
+    const s = renderer.scale;
+    const offX = (rect.width - 360 * s) / 2;
+    const offY = (rect.height - 480 * s) / 2;
+    // aim below the target so the grab offset lands the tower at (150, 120)
+    const grab = globalThis.__td.BALANCE.build.dragGrabOffset;
+    return { x: rect.left + offX + 150 * s, y: rect.top + offY + (120 - grab) * s };
+  });
+  await page.mouse.move(rowBox2.x + rowBox2.width / 2, rowBox2.y + rowBox2.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(goodPoint.x, goodPoint.y, { steps: 12 });
+  await page.screenshot({ path: path.join(SHOTS, 'phone-dragging.png') });
+  const preview = await page.evaluate(() => {
+    const d = globalThis.__td.game.state.drag;
+    return d ? { ok: d.ok, x: Math.round(d.x), y: Math.round(d.y) } : null;
+  });
+  await page.mouse.up();
+  const dropped = await page.evaluate(() => {
+    const t = globalThis.__td.game.state.towers;
+    return t.length ? { count: t.length, x: Math.round(t[0].x), y: Math.round(t[0].y) } : { count: 0 };
+  });
+  check('the drag preview reports a legal spot', preview && preview.ok, JSON.stringify(preview));
+  check('the ghost sits above the finger', preview && Math.abs(preview.y - 120) <= 2, `y ${preview && preview.y}`);
+  check('dropping on a legal spot builds the tower', dropped.count === 1 && Math.abs(dropped.y - 120) <= 2,
+    JSON.stringify(dropped));
+
+  // --- save / reload -----------------------------------------------------  // --- save / reload -----------------------------------------------------
   section('save and reload');
   const saved = await page.evaluate(() => {
     const { game } = globalThis.__td;
+    game.state.credits = 10_000;
+    game.buildTower(30, 120, 'turret');
+    game.buildTower(240, 222, 'laser');
     game.state.enemies.length = 0;
     game.save();
     game.save = () => true; // stop the page from overwriting the save on unload
@@ -257,6 +344,9 @@ async function main() {
     migrated.wave === 12 && migrated.credits === 777 && migrated.towers.length === 1,
     `wave ${migrated.wave}, credits ${migrated.credits}, towers ${migrated.towers.length}`);
   check('migration fills in missing fields', migrated.upgrades.damage === 0 && migrated.cores === 0);
+  check('slot-based towers become free-placed coordinates',
+    migrated.towers[0].x === 30 && migrated.towers[0].y === 120 && migrated.towers[0].slot === undefined,
+    JSON.stringify(migrated.towers[0]));
 
   const corrupt = await page.evaluate(async () => {
     localStorage.setItem('towerdefense.save', '{not json');
@@ -276,7 +366,7 @@ async function main() {
     const { game } = globalThis.__td;
     game.state.runEarned = 1_000_000;
     game.state.credits = 5000;
-    game.buildTower(3, 'turret');
+    game.buildTower(30, 120, 'turret');
     const pending = game.pendingCores();
     const res = game.prestige();
     return {
@@ -298,8 +388,9 @@ async function main() {
     const { game } = globalThis.__td;
     game.hardReset();
     game.state.credits = 900;
-    [0, 1, 2, 4, 7].forEach((s, i) => game.buildTower(s, i === 4 ? 'laser' : 'turret'));
-    game.state.selectedSlot = 1;
+    const spots = [[30, 120], [150, 120], [240, 120], [150, 222], [110, 332]];
+    const ids = spots.map(([x, y], i) => game.buildTower(x, y, i === 4 ? 'laser' : 'turret').id);
+    game.state.selected = ids[1];
     game.advanceBy(24);
     globalThis.__td.renderPanel();
   });

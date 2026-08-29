@@ -39,8 +39,11 @@ into `test/screenshots/` (gitignored).
 
 ## Next up
 
+- Real sound design and procedural music (WebAudio only, no files).
+- More detailed procedural sprites.
 - Tower targeting options (first / strongest / closest) per tower.
 - Per-tower upgrade levels, on top of the global ones.
+- Drag an existing tower to move it, for a fraction of its cost.
 - Boss modifiers (shielded, splitting, speeds up when damaged).
 - A second enemy path or a branch, once the core loop is fun.
 - Wave preview: show what's coming next during the prep phase.
@@ -56,6 +59,10 @@ into `test/screenshots/` (gitignored).
 - The panel rebuilds its DOM every ~20 frames, which resets scroll position if
   the panel is ever taller than the screen.
 - No pause. The game runs while a menu tab is open.
+- Free placement may collapse into "stack everything on the longest straight".
+  Minimum spacing is the only thing pushing back on that so far.
+- Saved towers are restored at their exact coordinates without re-checking the
+  placement rules, so tightening those rules will not delete anyone's towers.
 - The service worker is cache-first, so a deploy only reaches an installed
   phone after the `CACHE` bump above, and then on the second load.
 - The app icon is an SVG. Chrome accepts SVG manifest icons; if some launcher

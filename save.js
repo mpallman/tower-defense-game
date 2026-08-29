@@ -3,8 +3,17 @@
 // Every stored save carries a schemaVersion. Loading an older save runs the
 // migrations in order; it never silently resets progress.
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 export const STORAGE_KEY = 'towerdefense.save';
+
+// The eleven fixed build slots that existed before free placement. Frozen on
+// purpose: a migration must describe the old data, not follow the live level.
+const LEGACY_SLOTS = [
+  [30, 120], [150, 120], [240, 120],
+  [20, 222], [150, 222], [240, 222],
+  [30, 330], [110, 332], [245, 330],
+  [95, 440], [268, 435],
+];
 
 // migrations[n] upgrades a payload from version n to version n + 1.
 const migrations = {
@@ -13,6 +22,18 @@ const migrations = {
     ...data,
     upgrades: { damage: 0, rate: 0, range: 0, ...(data.upgrades || {}) },
     cores: data.cores || 0,
+  }),
+
+  // v1 -> v2: towers moved from a slot index to free x/y coordinates.
+  1: (data) => ({
+    ...data,
+    towers: (Array.isArray(data.towers) ? data.towers : []).map((t) => {
+      if (Number.isFinite(t.x) && Number.isFinite(t.y)) return t;
+      const slot = LEGACY_SLOTS[t.slot];
+      if (!slot) return null;
+      const { slot: _dropped, ...rest } = t;
+      return { ...rest, x: slot[0], y: slot[1] };
+    }).filter(Boolean),
   }),
 };
 

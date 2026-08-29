@@ -73,12 +73,15 @@ export const BALANCE = {
     range:  { name: 'Range',     cost: 45, growth: 1.36, effect: 0.05, blurb: '+5% tower range' },
   },
 
-  // Tap damage stays relevant forever because it scales with the wave curve.
-  tap: {
-    cooldown: 0.07,
-    flatBase: 4,
-    hpFraction: 0.02,        // 2% of a wave-appropriate grunt's max hp
-    damageUpgradeShare: 0.5, // how much of the damage upgrade applies to taps
+  // Free placement rules. All distances are logical px, centre to centre
+  // unless stated otherwise.
+  build: {
+    towerRadius: 12,      // footprint used for every placement check
+    pathClearance: 4,     // extra gap between the tower edge and the path edge
+    minSpacing: 26,       // closest two tower centres may sit
+    vaultClearance: 36,   // keep the vault readable
+    edgeMargin: 14,       // keep towers fully inside the logical world
+    dragGrabOffset: -30,  // ghost sits above the finger so it isn't hidden
   },
 
   prestige: {

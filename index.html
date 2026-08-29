@@ -69,6 +69,8 @@
     color: var(--text); font: inherit; text-align: left;
   }
   .row:disabled { opacity: .45; }
+  .row.drag { touch-action: none; }
+  .row.dragging { opacity: .5; border-color: var(--accent); }
   .row.on { border-color: var(--accent); box-shadow: inset 0 0 0 1px rgba(56,189,248,.35); }
   .row .name { font-weight: 700; }
   .row .sub { font-size: 11px; color: var(--dim); }
@@ -169,24 +171,43 @@ canvas.addEventListener('pointerdown', (ev) => {
   audio.ensure();
   const { x, y } = renderer.toLogical(ev.clientX, ev.clientY);
   const hit = game.tapAt(x, y);
-  if (hit.kind === 'enemy') audio.blip(320, 0.06, 'square', 0.025);
-  if (hit.kind === 'slot' && hit.slot >= 0) {
-    if (game.state.buildType && game.slotIsFree(hit.slot)) tryBuild(hit.slot, game.state.buildType);
-    setTab('build');
+  if (hit.kind === 'place') {
+    if (hit.ok) audio.blip(220, 0.1, 'square', 0.04);
+    else showToast(hit.reason);
   }
   renderPanel();
 }, { passive: true });
 
-function tryBuild(slot, type) {
-  const res = game.buildTower(slot, type);
-  if (res.ok) {
-    audio.blip(220, 0.1, 'square', 0.04);
-    game.state.selectedSlot = -1;
-    game.state.buildType = null;
-  } else {
-    showToast(res.reason);
-  }
-  return res;
+// Drag a tower out of the Build panel and onto the map. Pointer capture keeps
+// the events coming to the row even once the finger is over the canvas.
+function makeDraggable(el, type) {
+  el.classList.add('drag');
+  el.addEventListener('pointerdown', (ev) => {
+    if (el.disabled) return;
+    audio.ensure();
+    el.setPointerCapture(ev.pointerId);
+    el.classList.add('dragging');
+    game.startDrag(type);
+    const p = renderer.toLogical(ev.clientX, ev.clientY);
+    game.moveDrag(p.x, p.y);
+  });
+  el.addEventListener('pointermove', (ev) => {
+    if (!game.state.drag) return;
+    ev.preventDefault();
+    const p = renderer.toLogical(ev.clientX, ev.clientY);
+    game.moveDrag(p.x, p.y);
+  });
+  const finish = (ev) => {
+    el.classList.remove('dragging');
+    if (!game.state.drag) return;
+    if (el.hasPointerCapture?.(ev.pointerId)) el.releasePointerCapture(ev.pointerId);
+    const res = game.dropDrag();
+    if (res.ok) audio.blip(220, 0.1, 'square', 0.04);
+    else if (res.reason && res.reason !== 'cancelled') showToast(res.reason);
+    renderPanel();
+  };
+  el.addEventListener('pointerup', finish);
+  el.addEventListener('pointercancel', () => { el.classList.remove('dragging'); game.cancelDrag(); });
 }
 
 // -------------------------------------------------------------------- ui ---
@@ -238,16 +259,15 @@ function renderPanel() {
   panel.replaceChildren();
 
   if (tab === 'build') {
-    const selected = state.selectedSlot;
-    const tower = selected >= 0 ? game.towerAt(selected) : null;
+    const tower = state.selected != null ? game.towerById(state.selected) : null;
 
     const hint = document.createElement('div');
     hint.className = 'hint';
     hint.textContent = tower
-      ? `Slot ${selected + 1}: ${BALANCE.towers[tower.type].name}`
-      : selected >= 0
-        ? `Slot ${selected + 1} empty — pick a tower.`
-        : 'Pick a tower, then tap an empty slot. Tap enemies to damage them.';
+      ? `${BALANCE.towers[tower.type].name} selected — the ring shows its range.`
+      : state.buildType
+        ? `Now tap the map to place the ${BALANCE.towers[state.buildType].name}.`
+        : 'Drag a tower onto the map, or tap it and then tap a spot.';
     panel.appendChild(hint);
 
     if (tower) {
@@ -262,8 +282,8 @@ function renderPanel() {
         sub: `refund ${Math.round(BALANCE.economy.sellRefund * 100)}% of what it cost`,
         danger: true,
         onClick: () => {
-          const res = game.sellTower(selected);
-          if (res.ok) { state.selectedSlot = -1; showToast(`Sold for ${formatNumber(res.refund)}`); }
+          const res = game.sellTower(tower.id);
+          if (res.ok) showToast(`Sold for ${formatNumber(res.refund)}`);
         },
       }));
     }
@@ -271,7 +291,7 @@ function renderPanel() {
     for (const [key, def] of Object.entries(BALANCE.towers)) {
       const cost = game.towerCost(key);
       const stats = game.towerStats({ type: key });
-      panel.appendChild(row({
+      const el = row({
         color: def.color,
         name: def.name,
         sub: `${def.blurb} · ${formatNumber(stats.damage * stats.fireRate)} dps`,
@@ -279,17 +299,19 @@ function renderPanel() {
         affordable: state.credits >= cost,
         on: state.buildType === key,
         onClick: () => {
-          if (selected >= 0 && game.slotIsFree(selected)) { tryBuild(selected, key); return; }
           state.buildType = state.buildType === key ? null : key;
+          state.selected = null;
         },
-      }));
+      });
+      makeDraggable(el, key);
+      panel.appendChild(el);
     }
   }
 
   if (tab === 'upgrade') {
     const hint = document.createElement('div');
     hint.className = 'hint';
-    hint.textContent = `Applies to every tower. Tap damage ${formatNumber(game.tapDamage())}.`;
+    hint.textContent = 'Applies to every tower already built and every one you build later.';
     panel.appendChild(hint);
     for (const [key, def] of Object.entries(BALANCE.upgrades)) {
       const cost = game.upgradeCost(key);
@@ -366,7 +388,7 @@ function frame() {
   renderer.draw(game);
   renderHud();
   uiTimer += 1;
-  if (uiTimer % 20 === 0) renderPanel();
+  if (uiTimer % 20 === 0 && !game.state.drag) renderPanel();
   requestAnimationFrame(frame);
 }
 

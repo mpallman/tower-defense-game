@@ -20,8 +20,8 @@ Tone: cold, clean, readable at a glance on a small screen.
 1. Waves spawn automatically and walk a fixed path.
 2. Towers fire automatically. Kills drop currency.
 3. Player spends currency on new towers and on upgrades (damage, range, rate).
-4. Tapping an enemy deals a small amount of direct damage — the "clicker" part,
-   optional but rewarding during boss waves.
+4. Towers are placed freely anywhere off the path, by dragging them out of the
+   build panel. No fixed slots.
 5. Every N waves a boss appears; failure resets to wave 1 keeping upgrades.
 6. Prestige converts lifetime earnings into a permanent multiplier and wipes
    the run.

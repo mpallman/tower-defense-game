@@ -8,6 +8,7 @@ import { LEVEL } from './game.js';
 import { formatNumber } from './format.js';
 
 const SPRITE_SCALE = 3; // sprites are baked at 3x and drawn down for crispness
+const TOWER_R = BALANCE.build.towerRadius;
 
 const PALETTE = {
   bg: '#070b12',
@@ -87,7 +88,7 @@ function bakeEnemySprite(def) {
 }
 
 function bakeTowerBase(def) {
-  const r = LEVEL.slotRadius;
+  const r = BALANCE.build.towerRadius;
   const pad = 3;
   const size = Math.ceil((r + pad) * 2 * SPRITE_SCALE);
   const c = makeCanvas(size, size);
@@ -191,40 +192,12 @@ export function createRenderer(canvas) {
     ctx.restore();
   }
 
-  function drawSlots(game) {
-    const state = game.state;
-    for (let i = 0; i < LEVEL.slots.length; i++) {
-      const [x, y] = LEVEL.slots[i];
-      const tower = game.towerAt(i);
-      const selected = state.selectedSlot === i;
-      if (!tower) {
-        ctx.save();
-        ctx.setLineDash([3, 4]);
-        ctx.beginPath();
-        ctx.arc(x, y, LEVEL.slotRadius, 0, Math.PI * 2);
-        ctx.fillStyle = selected ? 'rgba(56,189,248,0.16)' : 'rgba(29,41,66,0.55)';
-        ctx.fill();
-        ctx.lineWidth = selected ? 1.8 : 1;
-        ctx.strokeStyle = selected ? PALETTE.vault : PALETTE.slotEdge;
-        ctx.stroke();
-        ctx.restore();
-        if (!selected) {
-          ctx.fillStyle = PALETTE.slotEdge;
-          ctx.font = '600 13px system-ui, sans-serif';
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText('+', x, y + 0.5);
-        }
-      }
-    }
-  }
-
   function drawTowers(game) {
     const state = game.state;
     for (const tower of state.towers) {
       const def = BALANCE.towers[tower.type];
       const sprite = towerSprites[tower.type];
-      const selected = state.selectedSlot === tower.slot;
+      const selected = state.selected === tower.id;
 
       if (selected) {
         const stats = game.towerStats(tower);
@@ -248,12 +221,12 @@ export function createRenderer(canvas) {
       ctx.rotate(tower.angle);
       ctx.fillStyle = shade(def.color, 40);
       if (def.beam) {
-        ctx.fillRect(0, -1.5, LEVEL.slotRadius + 3, 3);
-        ctx.fillRect(LEVEL.slotRadius, -3, 3, 6);
+        ctx.fillRect(0, -1.5, TOWER_R + 3, 3);
+        ctx.fillRect(TOWER_R, -3, 3, 6);
       } else if (def.splashRadius) {
-        ctx.fillRect(0, -3.5, LEVEL.slotRadius - 1, 7);
+        ctx.fillRect(0, -3.5, TOWER_R - 1, 7);
       } else {
-        ctx.fillRect(0, -2, LEVEL.slotRadius + 2, 4);
+        ctx.fillRect(0, -2, TOWER_R + 2, 4);
       }
       ctx.restore();
     }
@@ -360,6 +333,63 @@ export function createRenderer(canvas) {
     }
   }
 
+  // While dragging, show where a tower may not go and what it would cover.
+  function drawDrag(game) {
+    const drag = game.state.drag;
+    if (!drag || !Number.isFinite(drag.x)) return;
+    const b = BALANCE.build;
+
+    // the strip along the path that towers may not enter
+    ctx.save();
+    tracePath();
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = 'rgba(244,63,94,0.10)';
+    ctx.lineWidth = BALANCE.world.pathWidth + (b.towerRadius + b.pathClearance) * 2;
+    ctx.stroke();
+    ctx.restore();
+
+    const def = BALANCE.towers[drag.type];
+    const stats = game.towerStats({ type: drag.type });
+    const tint = drag.ok ? 'rgba(74,222,128,' : 'rgba(244,63,94,';
+
+    ctx.beginPath();
+    ctx.arc(drag.x, drag.y, stats.range, 0, Math.PI * 2);
+    ctx.fillStyle = tint + '0.08)';
+    ctx.fill();
+    ctx.setLineDash([4, 5]);
+    ctx.strokeStyle = tint + '0.6)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.save();
+    ctx.globalAlpha = 0.75;
+    const sprite = towerSprites[drag.type];
+    ctx.drawImage(sprite.canvas, drag.x - sprite.radius, drag.y - sprite.radius,
+      sprite.radius * 2, sprite.radius * 2);
+    ctx.restore();
+
+    ctx.beginPath();
+    ctx.arc(drag.x, drag.y, b.towerRadius + 3, 0, Math.PI * 2);
+    ctx.strokeStyle = tint + '0.95)';
+    ctx.lineWidth = 1.6;
+    ctx.stroke();
+
+    const label = drag.ok ? def.name : drag.reason;
+    if (label) {
+      ctx.font = '700 11px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      const w = ctx.measureText(label).width + 10;
+      const ly = drag.y - b.towerRadius - 6;
+      ctx.fillStyle = 'rgba(7,11,18,0.85)';
+      ctx.fillRect(drag.x - w / 2, ly - 14, w, 15);
+      ctx.fillStyle = drag.ok ? '#4ade80' : '#fca5a5';
+      ctx.fillText(label, drag.x, ly);
+    }
+  }
+
   function drawOverlay(game) {
     const state = game.state;
     ctx.textAlign = 'left';
@@ -404,12 +434,12 @@ export function createRenderer(canvas) {
     };
     drawBackground(view);
     drawPath(game.state.time);
-    drawSlots(game);
     drawVault(game);
     drawTowers(game);
     drawEnemies(game);
     drawProjectiles(game);
     drawFx(game);
+    drawDrag(game);
     drawOverlay(game);
   }
 

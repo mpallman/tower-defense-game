@@ -8,19 +8,12 @@ import { BALANCE } from './balance.js';
 import * as Save from './save.js';
 
 // ---------------------------------------------------------------- level ----
-// Geometry, not balance: the fixed path and the slots towers can occupy.
+// Geometry, not balance: the fixed path the enemies walk.
 export const LEVEL = {
   path: [
     [-20, 70], [300, 70], [300, 170], [60, 170], [60, 270],
     [300, 270], [300, 382], [180, 382], [180, 452],
   ],
-  slots: [
-    [30, 120], [150, 120], [240, 120],
-    [20, 222], [150, 222], [240, 222],
-    [30, 330], [110, 332], [245, 330],
-    [95, 440], [268, 435],
-  ],
-  slotRadius: 15,
 };
 
 LEVEL.segments = (() => {
@@ -49,6 +42,19 @@ export function pointAtDistance(dist) {
     }
   }
   return { x: LEVEL.vault[0], y: LEVEL.vault[1] };
+}
+
+// Shortest distance from a point to the path centre line.
+export function distanceToPath(x, y) {
+  let best = Infinity;
+  for (const s of LEVEL.segments) {
+    const dx = s.x2 - s.x1, dy = s.y2 - s.y1;
+    const lenSq = dx * dx + dy * dy;
+    const t = lenSq === 0 ? 0 : Math.max(0, Math.min(1, ((x - s.x1) * dx + (y - s.y1) * dy) / lenSq));
+    const d = Math.hypot(x - (s.x1 + dx * t), y - (s.y1 + dy * t));
+    if (d < best) best = d;
+  }
+  return best;
 }
 
 // ---------------------------------------------------------------- clock ----
@@ -99,7 +105,6 @@ function freshState() {
     lifetimeEarned: 0,
     bestWave: 1,
     kills: 0,
-    taps: 0,
     muted: false,
     seed: 0x1a2b3c4d,
     // transient
@@ -108,12 +113,12 @@ function freshState() {
     fx: [],
     time: 0,
     nextId: 1,
-    tapCooldown: 0,
     incomeRate: 0,
     incomeAccum: 0,
     incomeTimer: 0,
-    selectedSlot: -1,
-    buildType: null,
+    selected: null,    // id of the tower whose range and stats are shown
+    buildType: null,   // tower type armed for tap-to-place
+    drag: null,        // { type, x, y, ok, reason } while dragging a new tower
     banner: null,
     offlineReport: null,
   };
@@ -179,11 +184,6 @@ export function createGame(options = {}) {
   }
   function isBossWave(wave) {
     return wave % BALANCE.waves.bossEvery === 0;
-  }
-  function tapDamage() {
-    const base = BALANCE.tap.flatBase + waveHp(state.wave) * BALANCE.tap.hpFraction;
-    const share = 1 + state.upgrades.damage * BALANCE.upgrades.damage.effect * BALANCE.tap.damageUpgradeShare;
-    return base * share * prestigeMult();
   }
   function pendingCores() {
     const p = BALANCE.prestige;
@@ -337,7 +337,6 @@ export function createGame(options = {}) {
   // --- simulation --------------------------------------------------------
   function stepSim(dt) {
     state.time += dt;
-    state.tapCooldown = Math.max(0, state.tapCooldown - dt);
 
     // waves
     if (state.phase === 'prep') {
@@ -492,30 +491,50 @@ export function createGame(options = {}) {
   };
 
   // --- player actions ----------------------------------------------------
-  api.slotIsFree = (slot) => !state.towers.some((t) => t.slot === slot);
+  // Can a tower stand here? Returns a reason so the UI can explain a refusal.
+  api.canPlaceAt = function canPlaceAt(x, y, ignoreId = null) {
+    const b = BALANCE.build;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return { ok: false, reason: 'off the map' };
+    if (x < b.edgeMargin || x > BALANCE.world.width - b.edgeMargin
+      || y < b.edgeMargin || y > BALANCE.world.height - b.edgeMargin) {
+      return { ok: false, reason: 'off the map' };
+    }
+    if (distanceToPath(x, y) < BALANCE.world.pathWidth / 2 + b.towerRadius + b.pathClearance) {
+      return { ok: false, reason: 'too close to the path' };
+    }
+    if (Math.hypot(x - LEVEL.vault[0], y - LEVEL.vault[1]) < b.vaultClearance) {
+      return { ok: false, reason: 'too close to the vault' };
+    }
+    for (const t of state.towers) {
+      if (t.id === ignoreId) continue;
+      if (Math.hypot(x - t.x, y - t.y) < b.minSpacing) return { ok: false, reason: 'too close to another tower' };
+    }
+    return { ok: true };
+  };
 
-  api.buildTower = function buildTower(slot, type) {
+  api.buildTower = function buildTower(x, y, type) {
     if (!BALANCE.towers[type]) return { ok: false, reason: 'unknown tower' };
-    if (slot < 0 || slot >= LEVEL.slots.length) return { ok: false, reason: 'no such slot' };
-    if (!api.slotIsFree(slot)) return { ok: false, reason: 'slot taken' };
+    const spot = api.canPlaceAt(x, y);
+    if (!spot.ok) return spot;
     const cost = towerCost(type);
     if (state.credits < cost) return { ok: false, reason: 'not enough credits' };
     state.credits -= cost;
-    const [x, y] = LEVEL.slots[slot];
-    state.towers.push({
-      id: state.nextId++, slot, type, x, y, spent: cost,
+    const tower = {
+      id: state.nextId++, type, x, y, spent: cost,
       cooldown: 0, angle: -Math.PI / 2, kills: 0, damageDone: 0,
-    });
+    };
+    state.towers.push(tower);
     api.onEvent({ type: 'build', tower: type, cost });
-    return { ok: true, cost };
+    return { ok: true, cost, id: tower.id };
   };
 
-  api.sellTower = function sellTower(slot) {
-    const i = state.towers.findIndex((t) => t.slot === slot);
-    if (i < 0) return { ok: false, reason: 'empty slot' };
+  api.sellTower = function sellTower(id) {
+    const i = state.towers.findIndex((t) => t.id === id);
+    if (i < 0) return { ok: false, reason: 'no such tower' };
     const refund = Math.floor(state.towers[i].spent * BALANCE.economy.sellRefund);
     state.credits += refund;
     state.towers.splice(i, 1);
+    if (state.selected === id) state.selected = null;
     return { ok: true, refund };
   };
 
@@ -528,34 +547,59 @@ export function createGame(options = {}) {
     return { ok: true, cost, level: state.upgrades[key] };
   };
 
-  // A tap on the play field: hit an enemy, otherwise select a slot.
-  api.tapAt = function tapAt(x, y) {
-    if (state.tapCooldown <= 0) {
-      let hit = null;
-      let bestD = Infinity;
-      for (const e of state.enemies) {
-        const d = Math.hypot(e.x - x, e.y - y);
-        if (d < Math.max(e.radius + 12, 20) && d < bestD) { hit = e; bestD = d; }
-      }
-      if (hit) {
-        state.tapCooldown = BALANCE.tap.cooldown;
-        state.taps += 1;
-        const dmg = tapDamage();
-        floatText(hit.x, hit.y - 10, '-' + Math.round(dmg), '#fef08a');
-        damageEnemy(hit, dmg);
-        return { kind: 'enemy', damage: dmg };
-      }
+  api.towerNear = function towerNear(x, y) {
+    let best = null;
+    let bestD = BALANCE.build.towerRadius + 10;
+    for (const t of state.towers) {
+      const d = Math.hypot(t.x - x, t.y - y);
+      if (d <= bestD) { best = t; bestD = d; }
     }
-    for (let i = 0; i < LEVEL.slots.length; i++) {
-      const [sx, sy] = LEVEL.slots[i];
-      if (Math.hypot(sx - x, sy - y) <= LEVEL.slotRadius + 10) {
-        state.selectedSlot = state.selectedSlot === i ? -1 : i;
-        return { kind: 'slot', slot: state.selectedSlot };
-      }
-    }
-    state.selectedSlot = -1;
-    return { kind: 'none' };
+    return best;
   };
+
+  // A tap on the play field: place an armed tower, or select/deselect one.
+  api.tapAt = function tapAt(x, y) {
+    if (state.buildType) {
+      const res = api.buildTower(x, y, state.buildType);
+      // Deliberately not selecting the new tower: that would push the tower
+      // list down two rows and the next drag would grab the wrong one.
+      if (res.ok) state.buildType = null;
+      return { kind: 'place', ...res };
+    }
+    const tower = api.towerNear(x, y);
+    state.selected = tower && state.selected !== tower.id ? tower.id : null;
+    return { kind: tower ? 'tower' : 'none', id: state.selected };
+  };
+
+  // --- drag to place ------------------------------------------------------
+  api.startDrag = function startDrag(type) {
+    if (!BALANCE.towers[type]) return false;
+    state.drag = { type, x: NaN, y: NaN, ok: false, reason: 'drag onto the map' };
+    return true;
+  };
+
+  api.moveDrag = function moveDrag(x, y) {
+    if (!state.drag) return null;
+    const gy = y + BALANCE.build.dragGrabOffset;
+    const spot = api.canPlaceAt(x, gy);
+    const cost = towerCost(state.drag.type);
+    const affordable = state.credits >= cost;
+    Object.assign(state.drag, {
+      x, y: gy,
+      ok: spot.ok && affordable,
+      reason: spot.ok ? (affordable ? '' : 'not enough credits') : spot.reason,
+    });
+    return state.drag;
+  };
+
+  api.dropDrag = function dropDrag() {
+    const drag = state.drag;
+    state.drag = null;
+    if (!drag || !Number.isFinite(drag.x)) return { ok: false, reason: 'cancelled' };
+    return api.buildTower(drag.x, drag.y, drag.type);
+  };
+
+  api.cancelDrag = function cancelDrag() { state.drag = null; };
 
   api.prestige = function prestige() {
     const cores = pendingCores();
@@ -566,8 +610,9 @@ export function createGame(options = {}) {
     state.enemies.length = 0;
     state.projectiles.length = 0;
     state.fx.length = 0;
-    state.selectedSlot = -1;
+    state.selected = null;
     state.buildType = null;
+    state.drag = null;
     state.incomeRate = 0;
     state.incomeAccum = 0;
     state.incomeTimer = 0;
@@ -582,14 +627,13 @@ export function createGame(options = {}) {
       credits: state.credits,
       vaultHp: state.vaultHp,
       upgrades: { ...state.upgrades },
-      towers: state.towers.map((t) => ({ slot: t.slot, type: t.type, spent: t.spent, kills: t.kills })),
+      towers: state.towers.map((t) => ({ x: t.x, y: t.y, type: t.type, spent: t.spent, kills: t.kills })),
       cores: state.cores,
       prestiges: state.prestiges,
       lifetimeEarned: state.lifetimeEarned,
       runEarned: state.runEarned,
       bestWave: state.bestWave,
       kills: state.kills,
-      taps: state.taps,
       incomeRate: state.incomeRate,
       muted: state.muted,
       seed: state.seed,
@@ -608,11 +652,11 @@ export function createGame(options = {}) {
     state.towers = [];
     for (const t of Array.isArray(data.towers) ? data.towers : []) {
       if (!BALANCE.towers[t.type]) continue;
-      if (!(t.slot >= 0 && t.slot < LEVEL.slots.length)) continue;
-      if (!api.slotIsFree(t.slot)) continue;
-      const [x, y] = LEVEL.slots[t.slot];
+      if (!Number.isFinite(t.x) || !Number.isFinite(t.y)) continue;
+      // Deliberately not re-validating placement: if a later balance change
+      // makes an old position illegal, keeping the tower beats deleting it.
       state.towers.push({
-        id: state.nextId++, slot: t.slot, type: t.type, x, y,
+        id: state.nextId++, type: t.type, x: t.x, y: t.y,
         spent: num(t.spent, BALANCE.towers[t.type].cost),
         cooldown: 0, angle: -Math.PI / 2, kills: num(t.kills, 0), damageDone: 0,
       });
@@ -623,7 +667,6 @@ export function createGame(options = {}) {
     state.runEarned = Math.max(0, num(data.runEarned, 0));
     state.bestWave = Math.max(1, Math.floor(num(data.bestWave, state.wave)));
     state.kills = Math.max(0, Math.floor(num(data.kills, 0)));
-    state.taps = Math.max(0, Math.floor(num(data.taps, 0)));
     state.incomeRate = Math.max(0, num(data.incomeRate, 0));
     state.muted = !!data.muted;
     state.seed = Math.floor(num(data.seed, state.seed));
@@ -635,6 +678,9 @@ export function createGame(options = {}) {
     state.enemies.length = 0;
     state.projectiles.length = 0;
     state.fx.length = 0;
+    state.selected = null;
+    state.buildType = null;
+    state.drag = null;
   }
   api.restore = restore;
 
@@ -682,10 +728,9 @@ export function createGame(options = {}) {
   api.towerStats = towerStats;
   api.prestigeMult = prestigeMult;
   api.pendingCores = pendingCores;
-  api.tapDamage = tapDamage;
   api.isBossWave = isBossWave;
   api.waveHp = waveHp;
-  api.towerAt = (slot) => state.towers.find((t) => t.slot === slot) || null;
+  api.towerById = (id) => state.towers.find((t) => t.id === id) || null;
 
   return api;
 }
