@@ -43,6 +43,7 @@ into `test/screenshots/` (gitignored).
 - Tower targeting options (first / strongest / closest) per tower.
 - Per-tower upgrade levels, on top of the global ones.
 - Drag an existing tower to move it, for a fraction of its cost.
+- Auto-pause when a boss wave starts, as an option.
 - Boss modifiers (shielded, splitting, speeds up when damaged).
 - A second enemy path or a branch, once the core loop is fun.
 - Wave preview: show what's coming next during the prep phase.
@@ -57,11 +58,12 @@ into `test/screenshots/` (gitignored).
   previous run.
 - The panel rebuilds its DOM every ~20 frames, which resets scroll position if
   the panel is ever taller than the screen.
-- No pause. The game runs while a menu tab is open.
 - Firing sounds are rate limited to 12/second in total, so a wall of turrets
   sounds like a burst rather than a swarm. Tune in `BALANCE.audio`.
 - The music is one four-bar loop in A minor. It thickens with the wave number
-  but never changes key or progression.
+  but never changes key or progression. A test asserts every scheduled note
+  stays in key, so a future melody change cannot silently go sour.
+- Pause is deliberately not saved. Speed is.
 - Free placement may collapse into "stack everything on the longest straight".
   Minimum spacing is the only thing pushing back on that so far.
 - Saved towers are restored at their exact coordinates without re-checking the

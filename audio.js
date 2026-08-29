@@ -14,8 +14,11 @@ const PROGRESSION = [
   { root: 3,  quality: [0, 4, 7] },   // III C
   { root: -2, quality: [0, 4, 7] },   // VII G
 ];
-const PENTATONIC = [0, 3, 5, 7, 10];
-const ARP_PATTERN = [0, 2, 1, 3, 2, 4, 1, 2];
+// The arpeggio walks the current chord's own notes, spread over two octaves.
+// Transposing a fixed scale shape to each chord root instead would drag in
+// notes that are not in the key, which is exactly what "out of tune" sounds
+// like: over F it would play A flat, over C an E flat.
+const ARP_PATTERN = [0, 2, 1, 3, 2, 4, 1, 5];
 
 const midiToFreq = (m) => 440 * Math.pow(2, (m - 69) / 12);
 
@@ -35,6 +38,7 @@ export function createAudio(options = {}) {
   let step = 0;
   let nextStepTime = 0;
   let musicTarget = -1;
+  const noteLog = [];
 
   const stepSeconds = () => 60 / cfg.bpm / (cfg.stepsPerBar / 4);
 
@@ -185,6 +189,8 @@ export function createAudio(options = {}) {
   }
 
   function musicNote({ midi, time, duration, type, gain, detune = 0, cutoff = 0 }) {
+    noteLog.push(midi);
+    if (noteLog.length > 64) noteLog.shift();
     const osc = ctx.createOscillator();
     const amp = ctx.createGain();
     osc.type = type;
@@ -229,7 +235,8 @@ export function createAudio(options = {}) {
     }
     // arpeggio thickens as the run gets deeper
     if (level > 0.15 && (beat % 2 === 0 || level > 0.6)) {
-      const degree = PENTATONIC[ARP_PATTERN[index % ARP_PATTERN.length] % PENTATONIC.length];
+      const voicing = chord.quality.concat(chord.quality.map((n) => n + 12));
+      const degree = voicing[ARP_PATTERN[index % ARP_PATTERN.length] % voicing.length];
       musicNote({ midi: A + 24 + chord.root + degree, time, duration: stepSeconds() * 0.8,
         type: 'triangle', gain: 0.03 + level * 0.035, cutoff: 1800 + level * 2500 });
     }
@@ -274,6 +281,6 @@ export function createAudio(options = {}) {
     },
     suspend() { if (ctx && ctx.state === 'running') ctx.suspend(); },
     resume() { if (ctx && ctx.state === 'suspended') ctx.resume(); },
-    debug: () => ({ voices, step, music: musicBus ? musicBus.gain.value : 0 }),
+    debug: () => ({ voices, step, music: musicBus ? musicBus.gain.value : 0, notes: noteLog.slice() }),
   };
 }

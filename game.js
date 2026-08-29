@@ -107,6 +107,8 @@ function freshState() {
     kills: 0,
     muted: false,
     musicOff: false,
+    speed: BALANCE.controls.speeds[0],
+    paused: false,     // deliberately not saved: a game that opens frozen is a bug report
     seed: 0x1a2b3c4d,
     // transient
     enemies: [],
@@ -482,11 +484,14 @@ export function createGame(options = {}) {
     let dt = (now - lastTickWall) / 1000;
     lastTickWall = now;
     if (dt < 0) dt = 0;
-    if (dt > BALANCE.offline.minSeconds) {
+    if (state.paused) {
+      // Time keeps passing, the world does not. Nothing to catch up on later.
+    } else if (dt > BALANCE.offline.minSeconds) {
       // Screen was off or the tab was suspended: pay it as offline income.
+      // Real seconds, never multiplied by the speed setting.
       applyOffline(dt);
     } else {
-      api.advanceBy(Math.min(dt, BALANCE.sim.maxCatchUpSeconds));
+      api.advanceBy(Math.min(dt, BALANCE.sim.maxCatchUpSeconds) * state.speed);
     }
     if (now - lastSaveWall >= BALANCE.save.autosaveInterval * 1000) {
       api.save();
@@ -605,6 +610,25 @@ export function createGame(options = {}) {
 
   api.cancelDrag = function cancelDrag() { state.drag = null; };
 
+  // --- pace ---------------------------------------------------------------
+  api.setPaused = function setPaused(value) {
+    state.paused = !!value;
+    return state.paused;
+  };
+  api.togglePause = () => api.setPaused(!state.paused);
+
+  api.setSpeed = function setSpeed(value) {
+    const speeds = BALANCE.controls.speeds;
+    state.speed = speeds.includes(value) ? value : speeds[0];
+    return state.speed;
+  };
+
+  api.cycleSpeed = function cycleSpeed() {
+    const speeds = BALANCE.controls.speeds;
+    const next = speeds[(speeds.indexOf(state.speed) + 1) % speeds.length];
+    return api.setSpeed(next);
+  };
+
   api.prestige = function prestige() {
     const cores = pendingCores();
     if (cores < BALANCE.prestige.minCoresToPrestige) return { ok: false, reason: 'not enough lifetime earnings' };
@@ -641,6 +665,7 @@ export function createGame(options = {}) {
       incomeRate: state.incomeRate,
       muted: state.muted,
       musicOff: state.musicOff,
+      speed: state.speed,
       seed: state.seed,
     };
   }
@@ -675,6 +700,8 @@ export function createGame(options = {}) {
     state.incomeRate = Math.max(0, num(data.incomeRate, 0));
     state.muted = !!data.muted;
     state.musicOff = !!data.musicOff;
+    api.setSpeed(num(data.speed, BALANCE.controls.speeds[0]));
+    state.paused = false;
     state.seed = Math.floor(num(data.seed, state.seed));
     rng = mulberry32(state.seed);
     // A loaded run always restarts at the top of its wave.

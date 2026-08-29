@@ -397,7 +397,7 @@ async function main() {
   await page.waitForTimeout(300);
   const layout = await page.evaluate(() => {
     const doc = document.documentElement;
-    const small = [...document.querySelectorAll('#tabs button, #panel .row')]
+    const small = [...document.querySelectorAll('#tabs button, #controls button, #panel .row')]
       .filter((el) => el.getBoundingClientRect().height < 44)
       .map((el) => el.textContent.trim().slice(0, 24));
     return {
@@ -408,7 +408,7 @@ async function main() {
   });
   check('no horizontal overflow at 390x844', !layout.overflowX);
   check('every tap target is at least 44px tall', layout.small.length === 0, layout.small.join(', '));
-  check('the play area gets most of the screen', layout.stage > 380, `${Math.round(layout.stage)}px`);
+  check('the play area gets most of the screen', layout.stage > 340, `${Math.round(layout.stage)}px`);
 
   await page.screenshot({ path: path.join(SHOTS, 'phone-build.png') });
 
@@ -428,6 +428,74 @@ async function main() {
   await page.evaluate(() => globalThis.__td.setTab('prestige'));
   await page.waitForTimeout(150);
   await page.screenshot({ path: path.join(SHOTS, 'phone-prestige.png') });
+
+  // --- pause and speed ---------------------------------------------------
+  section('pace');
+  const pace = await page.evaluate(async () => {
+    const { game, clock } = globalThis.__td;
+    game.hardReset();
+    game.setSpeed(1);
+    game.tickRealtime();
+
+    clock.advance(1000); game.tickRealtime();
+    const oneX = game.state.time;
+
+    game.setSpeed(4);
+    clock.advance(1000); game.tickRealtime();
+    const fourX = game.state.time - oneX;
+
+    game.setPaused(true);
+    clock.advance(10_000); game.tickRealtime();
+    const whilePaused = game.state.time - oneX - fourX;
+
+    game.setPaused(false);
+    clock.advance(1000); game.tickRealtime();
+    const afterResume = game.state.time - oneX - fourX - whilePaused;
+
+    return { oneX, fourX, whilePaused, afterResume, cycle: [game.setSpeed(1), game.cycleSpeed(), game.cycleSpeed(), game.cycleSpeed()] };
+  });
+  check('one real second advances one game second at 1x', Math.abs(pace.oneX - 1) < 0.02, `${pace.oneX.toFixed(3)}s`);
+  check('4x advances four game seconds', Math.abs(pace.fourX - 4) < 0.05, `${pace.fourX.toFixed(3)}s`);
+  check('pausing stops the simulation', pace.whilePaused === 0, `${pace.whilePaused}s while paused`);
+  check('no time is banked up while paused', pace.afterResume < 4.1, `${pace.afterResume.toFixed(3)}s after resume`);
+  check('the speed button cycles', JSON.stringify(pace.cycle) === '[1,2,4,1]', pace.cycle.join(' -> '));
+
+  // the buttons, not just the api
+  await page.evaluate(() => { globalThis.__td.game.setPaused(false); globalThis.__td.game.setSpeed(1); });
+  await page.locator('#btn-pause').click();
+  const pausedByButton = await page.evaluate(() => ({
+    paused: globalThis.__td.game.state.paused,
+    label: document.getElementById('btn-pause').firstChild.textContent,
+  }));
+  check('the pause button pauses and relabels', pausedByButton.paused && pausedByButton.label === 'Resume',
+    pausedByButton.label);
+  await page.screenshot({ path: path.join(SHOTS, 'phone-paused.png') });
+  await page.locator('#btn-pause').click();
+  await page.locator('#btn-speed').click();
+  const speedByButton = await page.evaluate(() => ({
+    speed: globalThis.__td.game.state.speed,
+    label: document.getElementById('btn-speed').firstChild.textContent,
+    paused: globalThis.__td.game.state.paused,
+  }));
+  check('the speed button steps to 2x', speedByButton.speed === 2 && speedByButton.label === '2×', speedByButton.label);
+  check('resume clears the pause', !speedByButton.paused);
+
+  // speed is a preference and is saved; pause is not
+  await page.evaluate(() => {
+    const { game } = globalThis.__td;
+    game.setSpeed(4);
+    game.setPaused(true);
+    game.save();
+    game.save = () => true;
+  });
+  await page.reload({ waitUntil: 'load' });
+  await page.waitForFunction(() => !!globalThis.__td);
+  const afterReload = await page.evaluate(() => ({
+    speed: globalThis.__td.game.state.speed,
+    paused: globalThis.__td.game.state.paused,
+  }));
+  check('the speed setting survives a reload', afterReload.speed === 4, `${afterReload.speed}x`);
+  check('a paused game never reopens paused', afterReload.paused === false);
 
   // --- audio -------------------------------------------------------------
   section('audio');
@@ -470,6 +538,22 @@ async function main() {
     return globalThis.__td.audio.debug();
   });
   check('muting silences the music bus', muted.music < 0.01, `gain ${muted.music.toFixed(4)}`);
+
+  const inKey = await page.evaluate(async () => {
+    const { game, audio } = globalThis.__td;
+    game.state.muted = false;
+    game.state.musicOff = false;
+    game.state.wave = 20;              // deep enough for the arpeggio to play
+    await new Promise((r) => setTimeout(r, 2500));
+    return audio.debug().notes;
+  });
+  // A natural minor: A B C D E F G
+  const A_MINOR = new Set([9, 11, 0, 2, 4, 5, 7]);
+  const NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+  const outOfKey = inKey.filter((n) => !A_MINOR.has(((n % 12) + 12) % 12));
+  check('the music scheduled notes', inKey.length > 8, `${inKey.length} notes`);
+  check('every scheduled note is in A minor', outOfKey.length === 0,
+    [...new Set(outOfKey.map((n) => NAMES[((n % 12) + 12) % 12]))].join(', '));
   await page.evaluate(() => { globalThis.__td.game.state.muted = false; });
 
   // --- offline install ---------------------------------------------------

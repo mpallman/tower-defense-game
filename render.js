@@ -396,13 +396,29 @@ export function createRenderer(canvas) {
     ctx.textBaseline = 'top';
     ctx.font = '600 11px system-ui, sans-serif';
     ctx.fillStyle = PALETTE.dim;
-    const label = state.phase === 'prep'
+    const speed = state.speed > 1 ? ` · ${state.speed}×` : '';
+    const label = (state.phase === 'prep'
       ? `next wave in ${state.phaseTimer.toFixed(1)}s`
-      : `wave ${state.wave} · ${state.enemies.length + state.queue.length} left`;
+      : `wave ${state.wave} · ${state.enemies.length + state.queue.length} left`) + speed;
     ctx.fillText(label, 8, 8);
 
     ctx.textAlign = 'right';
     ctx.fillText(`enemy hp ${formatNumber(game.waveHp(state.wave))}`, W - 8, 8);
+
+    if (state.paused) {
+      ctx.save();
+      ctx.fillStyle = 'rgba(7,11,18,0.55)';
+      ctx.fillRect(0, 0, W, H);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = '800 22px system-ui, sans-serif';
+      ctx.fillStyle = PALETTE.text;
+      ctx.fillText('PAUSED', W / 2, H / 2 - 8);
+      ctx.font = '600 12px system-ui, sans-serif';
+      ctx.fillStyle = PALETTE.dim;
+      ctx.fillText('you can still build and sell', W / 2, H / 2 + 14);
+      ctx.restore();
+    }
 
     if (state.banner) {
       const t = state.banner.life / state.banner.max;

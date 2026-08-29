@@ -126,6 +126,10 @@ export const BALANCE = {
     particleLife: 0.5,
   },
 
+  controls: {
+    speeds: [1, 2, 4],   // the speed button cycles through these
+  },
+
   // Simulation timestep. Fixed so a fast-forward is deterministic.
   sim: {
     step: 1 / 30,
