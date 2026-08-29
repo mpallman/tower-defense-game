@@ -1,0 +1,114 @@
+// balance.js — every tunable number in the game lives here.
+// Nothing outside this file may hardcode a balance value.
+
+export const BALANCE = {
+  world: {
+    width: 360,          // logical px; the canvas is scaled to fit the phone
+    height: 480,
+    pathWidth: 26,
+  },
+
+  economy: {
+    startingCredits: 45,
+    sellRefund: 0.6,     // fraction of money spent returned when selling a tower
+  },
+
+  vault: {
+    maxHp: 20,
+    regenPerWave: 1,     // hp healed after every cleared wave
+  },
+
+  waves: {
+    prepTime: 3,         // seconds between waves
+    spawnInterval: 0.9,  // seconds between spawns inside a wave
+    baseCount: 5,        // enemies in wave 1
+    countPerWave: 0.6,   // extra enemies per wave (floored)
+    maxCount: 45,
+    hpBase: 14,
+    hpGrowth: 1.155,     // hp = hpBase * hpGrowth^(wave-1)
+    speedBase: 26,       // logical px/second
+    speedGrowth: 1.008,
+    speedMax: 78,
+    bountyBase: 5,
+    bountyGrowth: 1.115,
+    bossEvery: 5,
+    bossEscortRatio: 0.4, // boss waves also spawn this share of a normal wave
+    leakDamage: 1,       // vault damage when a normal enemy reaches the vault
+  },
+
+  // Multipliers applied on top of the wave curve above.
+  enemies: {
+    grunt: { name: 'Grunt', hp: 1,    speed: 1,    bounty: 1,   sides: 6,  radius: 8,  color: '#ff7a59', minWave: 1, weight: 10 },
+    swift: { name: 'Swift', hp: 0.55, speed: 1.7,  bounty: 0.9, sides: 3,  radius: 7,  color: '#ffd166', minWave: 4, weight: 5 },
+    hulk:  { name: 'Hulk',  hp: 3.2,  speed: 0.62, bounty: 2.6, sides: 8,  radius: 11, color: '#c084fc', minWave: 8, weight: 4 },
+    boss:  { name: 'Boss',  hp: 18,   speed: 0.5,  bounty: 15,  sides: 12, radius: 16, color: '#f43f5e', minWave: 1, weight: 0, leakDamage: 6 },
+  },
+
+  towers: {
+    turret: {
+      name: 'Turret', blurb: 'Steady single-target fire.',
+      cost: 30, costGrowth: 1.5,
+      damage: 6, range: 80, fireRate: 1.5, projectileSpeed: 260,
+      color: '#38bdf8',
+    },
+    laser: {
+      name: 'Laser', blurb: 'Fast beam, short range.',
+      cost: 110, costGrowth: 1.55,
+      damage: 2.6, range: 66, fireRate: 7, beam: true,
+      color: '#a3e635',
+    },
+    mortar: {
+      name: 'Mortar', blurb: 'Slow shells, splash damage.',
+      cost: 260, costGrowth: 1.6,
+      damage: 26, range: 120, fireRate: 0.55, projectileSpeed: 150,
+      splashRadius: 34, splashFalloff: 0.5,
+      color: '#fb923c',
+    },
+  },
+
+  // Run-scoped upgrades. Effect is additive per level: mult = 1 + level * effect.
+  upgrades: {
+    damage: { name: 'Damage',    cost: 35, growth: 1.32, effect: 0.16, blurb: '+16% tower damage' },
+    rate:   { name: 'Fire rate', cost: 40, growth: 1.34, effect: 0.09, blurb: '+9% fire rate' },
+    range:  { name: 'Range',     cost: 45, growth: 1.36, effect: 0.05, blurb: '+5% tower range' },
+  },
+
+  // Tap damage stays relevant forever because it scales with the wave curve.
+  tap: {
+    cooldown: 0.07,
+    flatBase: 4,
+    hpFraction: 0.02,        // 2% of a wave-appropriate grunt's max hp
+    damageUpgradeShare: 0.5, // how much of the damage upgrade applies to taps
+  },
+
+  prestige: {
+    divisor: 1500,
+    exponent: 0.5,       // cores = floor((runEarned / divisor) ^ exponent)
+    bonusPerCore: 0.06,  // multiplier = 1 + cores * bonusPerCore
+    minCoresToPrestige: 1,
+  },
+
+  offline: {
+    capHours: 8,
+    efficiency: 0.5,
+    minSeconds: 120,     // shorter absences are ignored
+    rateWindow: 6,       // seconds per income sample used for the earnings rate
+    rateSmoothing: 0.35, // EMA weight for a new sample
+  },
+
+  save: {
+    autosaveInterval: 8, // seconds
+  },
+
+  fx: {
+    maxParticles: 180,
+    floatLife: 0.9,
+    particleLife: 0.5,
+  },
+
+  // Simulation timestep. Fixed so a fast-forward is deterministic.
+  sim: {
+    step: 1 / 30,
+    maxCatchUpSeconds: 1.5, // real-time frames never simulate more than this
+  },
+};
