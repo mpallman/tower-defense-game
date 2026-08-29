@@ -39,7 +39,6 @@ into `test/screenshots/` (gitignored).
 
 ## Next up
 
-- Real sound design and procedural music (WebAudio only, no files).
 - More detailed procedural sprites.
 - Tower targeting options (first / strongest / closest) per tower.
 - Per-tower upgrade levels, on top of the global ones.
@@ -59,6 +58,10 @@ into `test/screenshots/` (gitignored).
 - The panel rebuilds its DOM every ~20 frames, which resets scroll position if
   the panel is ever taller than the screen.
 - No pause. The game runs while a menu tab is open.
+- Firing sounds are rate limited to 12/second in total, so a wall of turrets
+  sounds like a burst rather than a swarm. Tune in `BALANCE.audio`.
+- The music is one four-bar loop in A minor. It thickens with the wave number
+  but never changes key or progression.
 - Free placement may collapse into "stack everything on the longest straight".
   Minimum spacing is the only thing pushing back on that so far.
 - Saved towers are restored at their exact coordinates without re-checking the

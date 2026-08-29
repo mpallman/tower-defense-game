@@ -429,6 +429,49 @@ async function main() {
   await page.waitForTimeout(150);
   await page.screenshot({ path: path.join(SHOTS, 'phone-prestige.png') });
 
+  // --- audio -------------------------------------------------------------
+  section('audio');
+  await page.reload({ waitUntil: 'load' });
+  await page.waitForFunction(() => !!globalThis.__td);
+  await page.waitForTimeout(300);
+  check('no audio context exists before a gesture',
+    await page.evaluate(() => !globalThis.__td.audio.isActive()));
+
+  await page.locator('#tabs button[data-tab="build"]').click();
+  await page.waitForTimeout(300);
+  const unlocked = await page.evaluate(() => ({
+    active: globalThis.__td.audio.isActive(),
+    state: globalThis.__td.audio.contextState(),
+  }));
+  check('a gesture starts the audio context', unlocked.active, `context ${unlocked.state}`);
+
+  const sound = await page.evaluate(async () => {
+    const { game, audio } = globalThis.__td;
+    game.state.muted = false;
+    game.state.musicOff = false;
+    game.state.credits = 5_000;
+    game.buildTower(150, 120, 'turret');
+    game.buildTower(30, 120, 'laser');
+    game.buildTower(240, 120, 'mortar');
+    game.advanceBy(30);                       // fires shots, kills, wave events
+    ['kill', 'leak', 'waveClear', 'breach', 'prestige', 'build', 'sell', 'deny'].forEach((n) => audio.play(n));
+    audio.play('waveStart', true);
+    await new Promise((r) => setTimeout(r, 400));
+    return audio.debug();
+  });
+  check('the music scheduler is running', sound.step > 0, `${sound.step} steps scheduled`);
+  check('music gain fades in', sound.music > 0, `gain ${sound.music.toFixed(3)}`);
+  check('the sfx voice cap is respected', sound.voices <= 16, `${sound.voices} voices`);
+
+  const muted = await page.evaluate(async () => {
+    globalThis.__td.game.state.muted = true;
+    await new Promise((r) => setTimeout(r, 500));
+    globalThis.__td.game.advanceBy(10);
+    return globalThis.__td.audio.debug();
+  });
+  check('muting silences the music bus', muted.music < 0.01, `gain ${muted.music.toFixed(4)}`);
+  await page.evaluate(() => { globalThis.__td.game.state.muted = false; });
+
   // --- offline install ---------------------------------------------------
   section('offline');
   const manifest = await page.evaluate(async () => {

@@ -106,6 +106,7 @@ function freshState() {
     bestWave: 1,
     kills: 0,
     muted: false,
+    musicOff: false,
     seed: 0x1a2b3c4d,
     // transient
     enemies: [],
@@ -299,6 +300,7 @@ export function createGame(options = {}) {
     earn(reward);
     state.kills += 1;
     burst(enemy.x, enemy.y, BALANCE.enemies[enemy.type].color, enemy.type === 'boss' ? 18 : 6);
+    if (api.cosmetics) api.onEvent({ type: 'kill', boss: enemy.type === 'boss' });
     floatText(enemy.x, enemy.y, '+' + Math.round(reward), '#7dd3fc');
     state.enemies.splice(index, 1);
   }
@@ -366,6 +368,7 @@ export function createGame(options = {}) {
         const def = BALANCE.enemies[e.type];
         state.vaultHp -= def.leakDamage || BALANCE.waves.leakDamage;
         burst(e.x, e.y, '#f87171', 8);
+        if (api.cosmetics) api.onEvent({ type: 'leak' });
         state.enemies.splice(i, 1);
         if (state.vaultHp <= 0) { breachVault(); return; }
       }
@@ -380,6 +383,7 @@ export function createGame(options = {}) {
       tower.angle = Math.atan2(target.y - tower.y, target.x - tower.x);
       if (tower.cooldown > 0) continue;
       tower.cooldown = 1 / stats.fireRate;
+      if (api.cosmetics) api.onEvent({ type: 'shot', tower: tower.type });
       if (stats.beam) {
         beamFx(tower.x, tower.y, target.x, target.y, BALANCE.towers[tower.type].color);
         tower.damageDone += stats.damage;
@@ -636,6 +640,7 @@ export function createGame(options = {}) {
       kills: state.kills,
       incomeRate: state.incomeRate,
       muted: state.muted,
+      musicOff: state.musicOff,
       seed: state.seed,
     };
   }
@@ -669,6 +674,7 @@ export function createGame(options = {}) {
     state.kills = Math.max(0, Math.floor(num(data.kills, 0)));
     state.incomeRate = Math.max(0, num(data.incomeRate, 0));
     state.muted = !!data.muted;
+    state.musicOff = !!data.musicOff;
     state.seed = Math.floor(num(data.seed, state.seed));
     rng = mulberry32(state.seed);
     // A loaded run always restarts at the top of its wave.

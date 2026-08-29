@@ -99,6 +99,23 @@ export const BALANCE = {
     rateSmoothing: 0.35, // EMA weight for a new sample
   },
 
+  // Everything is synthesised at runtime; no audio file is ever loaded.
+  audio: {
+    master: 0.55,
+    sfx: 0.5,
+    music: 0.3,
+    bpm: 84,
+    stepsPerBar: 8,       // eighth notes
+    lookahead: 0.12,      // seconds of music scheduled ahead of the clock
+    tickInterval: 40,     // ms between scheduler ticks
+    maxVoices: 16,        // hard cap on simultaneous sfx voices
+    shotsPerSecond: 12,   // firing sounds are rate limited, not one per shot
+    intensityWaves: 30,   // wave at which the music reaches full intensity
+    bossIntensity: 0.35,  // added on a boss wave
+    fadeSeconds: 0.5,   // music fading back in
+    muteFadeSeconds: 0.08, // muting should feel instant, not like a dip
+  },
+
   save: {
     autosaveInterval: 8, // seconds
   },

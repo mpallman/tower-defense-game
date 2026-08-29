@@ -109,32 +109,19 @@
 import { BALANCE } from './balance.js';
 import { createGame, createSystemClock, createManualClock, LEVEL } from './game.js';
 import { createRenderer } from './render.js';
+import { createAudio } from './audio.js';
 import { formatNumber, formatDuration } from './format.js';
 
 // ------------------------------------------------------------------ audio --
-// Synthesised only, and only after the first user gesture.
-const audio = (() => {
-  let ctx = null;
-  function ensure() {
-    if (!ctx && typeof AudioContext !== 'undefined') ctx = new AudioContext();
-    if (ctx && ctx.state === 'suspended') ctx.resume();
-    return ctx;
-  }
-  function blip(freq, duration, type = 'square', gain = 0.04) {
-    if (!ctx || game.state.muted) return;
-    const osc = ctx.createOscillator();
-    const amp = ctx.createGain();
-    osc.type = type;
-    osc.frequency.setValueAtTime(freq, ctx.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(Math.max(40, freq * 0.5), ctx.currentTime + duration);
-    amp.gain.setValueAtTime(gain, ctx.currentTime);
-    amp.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + duration);
-    osc.connect(amp).connect(ctx.destination);
-    osc.start();
-    osc.stop(ctx.currentTime + duration);
-  }
-  return { ensure, blip };
-})();
+// Created lazily on the first gesture; see audio.js.
+const audio = createAudio({
+  getState: () => ({
+    muted: game.state.muted,
+    musicOff: game.state.musicOff,
+    wave: game.state.wave,
+    boss: game.isBossWave(game.state.wave),
+  }),
+});
 
 // ------------------------------------------------------------------ toast --
 let toastTimer = 0;
@@ -152,9 +139,17 @@ const clock = globalThis.__TD_MANUAL_CLOCK ? createManualClock(Date.now()) : cre
 const game = createGame({
   clock,
   onEvent(ev) {
-    if (ev.type === 'breach') audio.blip(90, 0.5, 'sawtooth', 0.07);
-    else if (ev.type === 'waveClear') audio.blip(520, 0.12, 'triangle', 0.03);
-    else if (ev.type === 'prestige') audio.blip(660, 0.4, 'triangle', 0.05);
+    switch (ev.type) {
+      case 'shot': audio.shot(ev.tower); break;
+      case 'kill': audio.play('kill', ev.boss); break;
+      case 'leak': audio.play('leak'); break;
+      case 'waveStart': audio.play('waveStart', ev.boss); break;
+      case 'waveClear': audio.play('waveClear'); break;
+      case 'breach': audio.play('breach'); break;
+      case 'prestige': audio.play('prestige'); break;
+      case 'build': audio.play('build'); break;
+      default: break;
+    }
   },
 });
 
@@ -168,13 +163,10 @@ if (loadReport.offline) {
 
 // ------------------------------------------------------------------ input --
 canvas.addEventListener('pointerdown', (ev) => {
-  audio.ensure();
+  audio.unlock();
   const { x, y } = renderer.toLogical(ev.clientX, ev.clientY);
   const hit = game.tapAt(x, y);
-  if (hit.kind === 'place') {
-    if (hit.ok) audio.blip(220, 0.1, 'square', 0.04);
-    else showToast(hit.reason);
-  }
+  if (hit.kind === 'place' && !hit.ok) { audio.play('deny'); showToast(hit.reason); }
   renderPanel();
 }, { passive: true });
 
@@ -184,7 +176,7 @@ function makeDraggable(el, type) {
   el.classList.add('drag');
   el.addEventListener('pointerdown', (ev) => {
     if (el.disabled) return;
-    audio.ensure();
+    audio.unlock();
     el.setPointerCapture(ev.pointerId);
     el.classList.add('dragging');
     game.startDrag(type);
@@ -202,8 +194,7 @@ function makeDraggable(el, type) {
     if (!game.state.drag) return;
     if (el.hasPointerCapture?.(ev.pointerId)) el.releasePointerCapture(ev.pointerId);
     const res = game.dropDrag();
-    if (res.ok) audio.blip(220, 0.1, 'square', 0.04);
-    else if (res.reason && res.reason !== 'cancelled') showToast(res.reason);
+    if (!res.ok && res.reason && res.reason !== 'cancelled') { audio.play('deny'); showToast(res.reason); }
     renderPanel();
   };
   el.addEventListener('pointerup', finish);
@@ -217,7 +208,7 @@ let tab = 'build';
 
 tabs.addEventListener('click', (ev) => {
   const btn = ev.target.closest('button[data-tab]');
-  if (btn) { audio.ensure(); setTab(btn.dataset.tab); }
+  if (btn) { audio.unlock(); setTab(btn.dataset.tab); }
 });
 
 function setTab(next) {
@@ -250,7 +241,7 @@ function row({ color, name, sub, cost, affordable, on, disabled, onClick, danger
     c.textContent = cost;
     el.appendChild(c);
   }
-  if (onClick) el.addEventListener('click', () => { audio.ensure(); onClick(); renderPanel(); });
+  if (onClick) el.addEventListener('click', () => { audio.unlock(); onClick(); renderPanel(); });
   return el;
 }
 
@@ -283,7 +274,7 @@ function renderPanel() {
         danger: true,
         onClick: () => {
           const res = game.sellTower(tower.id);
-          if (res.ok) showToast(`Sold for ${formatNumber(res.refund)}`);
+          if (res.ok) { audio.play('sell'); showToast(`Sold for ${formatNumber(res.refund)}`); }
         },
       }));
     }
@@ -321,7 +312,7 @@ function renderPanel() {
         cost: formatNumber(cost),
         affordable: state.credits >= cost,
         disabled: state.credits < cost,
-        onClick: () => { game.buyUpgrade(key); },
+        onClick: () => { if (game.buyUpgrade(key).ok) audio.play('upgrade'); },
       }));
     }
   }
@@ -353,7 +344,12 @@ function renderPanel() {
     split.className = 'split';
     split.appendChild(row({
       name: state.muted ? 'Sound off' : 'Sound on',
-      onClick: () => { state.muted = !state.muted; game.save(); },
+      onClick: () => { state.muted = !state.muted; if (!state.muted) audio.play('upgrade'); game.save(); },
+    }));
+    split.appendChild(row({
+      name: state.musicOff ? 'Music off' : 'Music on',
+      disabled: state.muted,
+      onClick: () => { state.musicOff = !state.musicOff; game.save(); },
     }));
     split.appendChild(row({
       name: 'Wipe save',
@@ -393,7 +389,9 @@ function frame() {
 }
 
 addEventListener('resize', () => renderer.resize());
-addEventListener('visibilitychange', () => { if (document.hidden) game.save(); });
+addEventListener('visibilitychange', () => {
+  if (document.hidden) { game.save(); audio.suspend(); } else { audio.resume(); }
+});
 addEventListener('pagehide', () => game.save());
 
 setTab('build');
@@ -411,5 +409,5 @@ if ('serviceWorker' in navigator && globalThis.isSecureContext) {
 }
 
 // Test surface. Kept tiny and read-only apart from the clock.
-globalThis.__td = { game, renderer, clock, BALANCE, LEVEL, setTab, renderPanel, formatNumber };
+globalThis.__td = { game, renderer, clock, audio, BALANCE, LEVEL, setTab, renderPanel, formatNumber };
 </script>
