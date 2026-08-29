@@ -1,6 +1,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <meta name="theme-color" content="#070b12">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Vault">
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="icon" type="image/svg+xml" href="./icon.svg">
+<link rel="apple-touch-icon" href="./icon.svg">
 <title>Vault Defense</title>
 <style>
   :root {
@@ -371,6 +378,15 @@ setTab('build');
 renderHud();
 renderer.resize();
 requestAnimationFrame(frame);
+
+// Offline play and home-screen install. Needs a secure origin, so it is a
+// no-op over plain http on a LAN address — the game still runs, just online.
+if ('serviceWorker' in navigator && globalThis.isSecureContext) {
+  addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js')
+      .catch((err) => console.warn('service worker not registered', err));
+  });
+}
 
 // Test surface. Kept tiny and read-only apart from the clock.
 globalThis.__td = { game, renderer, clock, BALANCE, LEVEL, setTab, renderPanel, formatNumber };

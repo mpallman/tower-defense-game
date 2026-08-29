@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Drawn, not downloaded: same geometry language as the game itself. -->
+  <rect width="512" height="512" fill="#070b12"/>
+  <g stroke="#16233a" stroke-width="2">
+    <path d="M0 128h512M0 256h512M0 384h512M128 0v512M256 0v512M384 0v512"/>
+  </g>
+  <circle cx="256" cy="256" r="150" fill="none" stroke="#123449" stroke-width="10"/>
+  <polygon points="256,136 360,196 360,316 256,376 152,316 152,196"
+           fill="#0d2233" stroke="#38bdf8" stroke-width="14" stroke-linejoin="round"/>
+  <polygon points="256,196 308,226 308,286 256,316 204,286 204,226"
+           fill="#38bdf8" opacity="0.22"/>
+  <circle cx="256" cy="256" r="26" fill="#38bdf8"/>
+  <circle cx="118" cy="118" r="16" fill="#ff7a59"/>
+  <circle cx="394" cy="118" r="16" fill="#ff7a59"/>
+</svg>

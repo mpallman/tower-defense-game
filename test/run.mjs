@@ -27,6 +27,8 @@ const MIME = {
   '.js': 'text/javascript; charset=utf-8',
   '.json': 'application/json',
   '.png': 'image/png',
+  '.svg': 'image/svg+xml',
+  '.webmanifest': 'application/manifest+json',
 };
 
 function serve() {
@@ -335,6 +337,33 @@ async function main() {
   await page.evaluate(() => globalThis.__td.setTab('prestige'));
   await page.waitForTimeout(150);
   await page.screenshot({ path: path.join(SHOTS, 'phone-prestige.png') });
+
+  // --- offline install ---------------------------------------------------
+  section('offline');
+  const manifest = await page.evaluate(async () => {
+    const res = await fetch('./manifest.webmanifest');
+    return { ok: res.ok, json: await res.json() };
+  });
+  check('the manifest is served and parses', manifest.ok && manifest.json.name === 'Vault Defense');
+  check('the manifest ships an icon and a start url',
+    manifest.json.icons.length > 0 && manifest.json.start_url === './' && manifest.json.display === 'standalone');
+
+  const swReady = await page.evaluate(() => navigator.serviceWorker.ready.then((reg) => !!reg.active));
+  check('the service worker activates', swReady);
+
+  // Kill the network entirely and reload: the game must still boot.
+  await context.setOffline(true);
+  await page.reload({ waitUntil: 'load' });
+  await page.waitForFunction(() => !!globalThis.__td, null, { timeout: 15_000 });
+  const offlineBoot = await page.evaluate(() => {
+    const { game } = globalThis.__td;
+    game.advanceBy(5);
+    const c = document.getElementById('game');
+    return { wave: game.state.wave, canvas: c.width > 0 && c.height > 0 };
+  });
+  check('the game boots and runs with the network switched off',
+    offlineBoot.canvas && offlineBoot.wave >= 1, `wave ${offlineBoot.wave}`);
+  await context.setOffline(false);
 
   // --- final error sweep -------------------------------------------------
   section('errors');

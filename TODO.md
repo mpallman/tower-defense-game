@@ -1,14 +1,33 @@
 # TODO
 
-## How to run
+## How to play
 
-ES modules can't be loaded over `file://`, so opening `index.html` by
-double-clicking it will not work. Serve the folder instead:
+Once GitHub Pages is on, the phone needs nothing else:
+
+    https://mpallman.github.io/tower-defense-game/
+
+Open it once, then Share/menu -> "Add to Home Screen". After that it runs
+offline, full screen, with no server and no computer involved.
+
+## How to run it locally
+
+ES modules can't be loaded over `file://`, so double-clicking `index.html`
+will not work. Serve the folder instead:
 
     python3 -m http.server 8000     # then open http://localhost:8000
 
-On the phone: same network, `http://<pc-ip>:8000`. Still zero build, zero
-dependencies, zero downloaded assets.
+From the phone on the same network: `http://<pc-ip>:8000`. Note the service
+worker stays off there — it needs a secure origin, so offline play only works
+from the https Pages URL.
+
+Saves are per-origin. `localhost:8000`, `192.168.x.x:8000` and the Pages URL
+each keep a separate save.
+
+## Shipping a change
+
+Bump `CACHE` in `sw.js` (`vault-defense-v1` -> `-v2` ...) whenever any file
+changes. Without that bump, installed phones keep serving the old build from
+cache forever.
 
 ## Tests
 
@@ -37,6 +56,10 @@ into `test/screenshots/` (gitignored).
 - The panel rebuilds its DOM every ~20 frames, which resets scroll position if
   the panel is ever taller than the screen.
 - No pause. The game runs while a menu tab is open.
+- The service worker is cache-first, so a deploy only reaches an installed
+  phone after the `CACHE` bump above, and then on the second load.
+- The app icon is an SVG. Chrome accepts SVG manifest icons; if some launcher
+  refuses it, the app still installs, just with a generated fallback icon.
 
 ## Balance notes (for me to fill in after playing)
 
