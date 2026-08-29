@@ -31,6 +31,17 @@ LEVEL.segments = (() => {
 LEVEL.pathLength = LEVEL.segments.reduce((a, s) => a + s.length, 0);
 LEVEL.vault = LEVEL.path[LEVEL.path.length - 1];
 
+// Where the path sits inside the arena. The camera opens framed on this, so
+// the framing follows the path rather than repeating its numbers somewhere.
+LEVEL.bounds = LEVEL.path.reduce((box, [x, y]) => ({
+  x0: Math.min(box.x0, x), y0: Math.min(box.y0, y),
+  x1: Math.max(box.x1, x), y1: Math.max(box.y1, y),
+}), { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity });
+LEVEL.center = {
+  x: (LEVEL.bounds.x0 + LEVEL.bounds.x1) / 2,
+  y: (LEVEL.bounds.y0 + LEVEL.bounds.y1) / 2,
+};
+
 export function pointAtDistance(dist) {
   const segs = LEVEL.segments;
   const d = Math.max(0, Math.min(dist, LEVEL.pathLength));
@@ -545,8 +556,9 @@ export function createGame(options = {}) {
   api.canPlaceAt = function canPlaceAt(x, y, ignoreId = null) {
     const b = BALANCE.build;
     if (!Number.isFinite(x) || !Number.isFinite(y)) return { ok: false, reason: 'off the map' };
-    if (x < b.edgeMargin || x > BALANCE.world.width - b.edgeMargin
-      || y < b.edgeMargin || y > BALANCE.world.height - b.edgeMargin) {
+    const w = BALANCE.world;
+    if (x < w.x + b.edgeMargin || x > w.x + w.width - b.edgeMargin
+      || y < w.y + b.edgeMargin || y > w.y + w.height - b.edgeMargin) {
       return { ok: false, reason: 'off the map' };
     }
     if (distanceToPath(x, y) < BALANCE.world.pathWidth / 2 + b.towerRadius + b.pathClearance) {
@@ -628,9 +640,11 @@ export function createGame(options = {}) {
     return true;
   };
 
-  api.moveDrag = function moveDrag(x, y) {
+  // Takes the ghost's own position. The lift above the finger is applied by the
+  // input layer, in screen pixels, because a world-space lift would shrink to
+  // nothing under the thumb as you zoom out.
+  api.moveDrag = function moveDrag(x, gy) {
     if (!state.drag) return null;
-    const gy = y + BALANCE.build.dragGrabOffset;
     const spot = api.canPlaceAt(x, gy);
     const cost = towerCost(state.drag.type);
     const affordable = state.credits >= cost;

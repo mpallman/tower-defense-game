@@ -168,7 +168,9 @@ async function main() {
     game.hardReset();
     game.state.credits = 100_000;
     const onPath = game.canPlaceAt(150, 70);
-    const offMap = game.canPlaceAt(2, 2);
+    // just outside the arena's own corner, wherever the arena happens to be
+    const w = globalThis.__td.BALANCE.world;
+    const offMap = game.canPlaceAt(w.x - 5, w.y - 5);
     const nearVault = game.canPlaceAt(180, 428);
     const first = game.buildTower(150, 120, 'turret');
     const stacked = game.buildTower(152, 124, 'turret');
@@ -205,16 +207,15 @@ async function main() {
   const canvasBox = await page.locator('#game').boundingBox();
 
   // drop it on the path first: must be refused
-  const onPathPoint = await page.evaluate(() => {
-    const { renderer } = globalThis.__td;
-    const rect = document.getElementById('game').getBoundingClientRect();
-    const s = renderer.scale;
-    const offX = (rect.width - 360 * s) / 2;
-    const offY = (rect.height - 480 * s) / 2;
-    // aim low so the ghost, which floats above the finger, lands on the path
-    const grab = globalThis.__td.BALANCE.build.dragGrabOffset;
-    return { x: rect.left + offX + 150 * s, y: rect.top + offY + (70 - grab) * s };
-  });
+  // Aim the ghost, not the finger: the finger sits `dragGrabOffset` screen px
+  // below wherever the tower should land.
+  const aimAt = (wx, wy) => page.evaluate(([x, y]) => {
+    const { renderer, BALANCE } = globalThis.__td;
+    const p = renderer.toClient(x, y);
+    return { x: p.x, y: p.y - BALANCE.build.dragGrabOffset };
+  }, [wx, wy]);
+
+  const onPathPoint = await aimAt(150, 70);
   await page.mouse.move(rowBox.x + rowBox.width / 2, rowBox.y + rowBox.height / 2);
   await page.mouse.down();
   await page.mouse.move(onPathPoint.x, onPathPoint.y, { steps: 12 });
@@ -231,16 +232,7 @@ async function main() {
   await page.evaluate(() => { globalThis.__td.game.state.selected = null; globalThis.__td.renderPanel(); });
   await page.waitForTimeout(80);
   const rowBox2 = await page.locator('#panel .row', { hasText: 'Turret' }).first().boundingBox();
-  const goodPoint = await page.evaluate(() => {
-    const { renderer } = globalThis.__td;
-    const rect = document.getElementById('game').getBoundingClientRect();
-    const s = renderer.scale;
-    const offX = (rect.width - 360 * s) / 2;
-    const offY = (rect.height - 480 * s) / 2;
-    // aim below the target so the grab offset lands the tower at (150, 120)
-    const grab = globalThis.__td.BALANCE.build.dragGrabOffset;
-    return { x: rect.left + offX + 150 * s, y: rect.top + offY + (120 - grab) * s };
-  });
+  const goodPoint = await aimAt(150, 120);
   await page.mouse.move(rowBox2.x + rowBox2.width / 2, rowBox2.y + rowBox2.height / 2);
   await page.mouse.down();
   await page.mouse.move(goodPoint.x, goodPoint.y, { steps: 12 });
@@ -313,16 +305,7 @@ async function main() {
   card = await armPanel();
   fx = card.x + card.width / 2;
   fy = card.y + card.height / 2;
-  const dropPoint = await page.evaluate(() => {
-    const { renderer, BALANCE } = globalThis.__td;
-    const rect = document.getElementById('game').getBoundingClientRect();
-    const s = renderer.scale;
-    const grab = BALANCE.build.dragGrabOffset;
-    return {
-      x: rect.left + (rect.width - 360 * s) / 2 + 150 * s,
-      y: rect.top + (rect.height - 480 * s) / 2 + (120 - grab) * s,
-    };
-  });
+  const dropPoint = await aimAt(150, 120);
   await touch('touchStart', fx, fy);
   await page.waitForTimeout(320);
   const heldDrag = await page.evaluate(() => !!globalThis.__td.game.state.drag);
@@ -357,6 +340,140 @@ async function main() {
   }));
   check('releasing back on the panel cancels quietly',
     putBack.towers === 1 && !putBack.dragging && !putBack.complaining, JSON.stringify(putBack));
+
+  await page.evaluate(() => { globalThis.__td.game.hardReset(); globalThis.__td.renderPanel(); });
+
+  // --- camera --------------------------------------------------------------
+  section('camera');
+  await page.evaluate(() => {
+    const { game, renderer, ui } = globalThis.__td;
+    game.hardReset();
+    game.state.credits = 5_000;
+    game.buildTower(150, 120, 'turret');
+    renderer.recentre();
+    ui.sync();
+  });
+  await page.waitForTimeout(120);
+
+  const opening = await page.evaluate(() => {
+    const { renderer, LEVEL } = globalThis.__td;
+    return {
+      zoom: renderer.camera.zoom,
+      x: Math.round(renderer.camera.x),
+      y: Math.round(renderer.camera.y),
+      centre: { x: Math.round(LEVEL.center.x), y: Math.round(LEVEL.center.y) },
+    };
+  });
+  check('the view opens at zoom 1, framed on the path',
+    opening.zoom === 1 && opening.x === opening.centre.x && opening.y === opening.centre.y,
+    JSON.stringify(opening));
+
+  const roundTrip = await page.evaluate(() => {
+    const { renderer } = globalThis.__td;
+    const worst = [[0, 0], [150, 120], [-160, -190], [500, 650]].map(([x, y]) => {
+      const c = renderer.toClient(x, y);
+      const back = renderer.toLogical(c.x, c.y);
+      return Math.hypot(back.x - x, back.y - y);
+    });
+    return Math.max(...worst);
+  });
+  check('screen and world coordinates round-trip', roundTrip < 0.01, `${roundTrip.toFixed(4)} px off`);
+
+  // a tap that goes nowhere still selects the tower under it
+  let towerAt = await page.evaluate(() => globalThis.__td.renderer.toClient(150, 120));
+  await touch('touchStart', towerAt.x, towerAt.y);
+  await touch('touchEnd', towerAt.x, towerAt.y);
+  await page.waitForTimeout(120);
+  check('a still tap on the field still selects a tower',
+    await page.evaluate(() => globalThis.__td.game.state.selected !== null));
+
+  // one finger drags the world
+  const panned = await (async () => {
+    const before = await page.evaluate(() => ({ ...globalThis.__td.renderer.camera }));
+    const from = await page.evaluate(() => globalThis.__td.renderer.toClient(150, 260));
+    await touch('touchStart', from.x, from.y);
+    for (let i = 1; i <= 8; i++) { await touch('touchMove', from.x - i * 9, from.y - i * 6); await page.waitForTimeout(16); }
+    await touch('touchEnd', from.x - 72, from.y - 48);
+    await page.waitForTimeout(120);
+    const after = await page.evaluate(() => ({ ...globalThis.__td.renderer.camera }));
+    return { before, after };
+  })();
+  check('one finger pans the world',
+    panned.after.x > panned.before.x + 20 && panned.after.y > panned.before.y + 10,
+    `${Math.round(panned.before.x)},${Math.round(panned.before.y)} -> ${Math.round(panned.after.x)},${Math.round(panned.after.y)}`);
+  check('panning is not a tap, so it changes no selection',
+    await page.evaluate(() => globalThis.__td.game.state.selected !== null));
+
+  // the arena cannot be pushed off the screen
+  const clamped = await (async () => {
+    for (let pass = 0; pass < 6; pass++) {
+      const start = { x: 200, y: 300 };
+      await touch('touchStart', start.x, start.y);
+      for (let i = 1; i <= 8; i++) { await touch('touchMove', start.x + i * 30, start.y + i * 30); await page.waitForTimeout(8); }
+      await touch('touchEnd', start.x + 240, start.y + 240);
+    }
+    await page.waitForTimeout(120);
+    return page.evaluate(() => {
+      const { renderer, BALANCE } = globalThis.__td;
+      const w = BALANCE.world;
+      const rect = document.getElementById('game').getBoundingClientRect();
+      const halfW = rect.width / renderer.scale / 2;
+      const halfH = rect.height / renderer.scale / 2;
+      return {
+        left: renderer.camera.x - halfW - w.x,
+        top: renderer.camera.y - halfH - w.y,
+      };
+    });
+  })();
+  check('the arena cannot be dragged off the screen',
+    clamped.left >= -0.5 && clamped.top >= -0.5, JSON.stringify(clamped));
+
+  // pinch
+  await page.evaluate(() => globalThis.__td.renderer.recentre());
+  const pinch = async (spread) => {
+    const cx = 195, cy = 300;
+    const pts = (gap) => [
+      { x: cx - gap, y: cy, radiusX: 12, radiusY: 12, force: 1, id: 1 },
+      { x: cx + gap, y: cy, radiusX: 12, radiusY: 12, force: 1, id: 2 },
+    ];
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: pts(40) });
+    for (let i = 1; i <= 8; i++) {
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: pts(40 + spread * i) });
+      await page.waitForTimeout(16);
+    }
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await page.waitForTimeout(100);
+    return page.evaluate(() => globalThis.__td.renderer.camera.zoom);
+  };
+  const zoomedIn = await pinch(8);
+  check('spreading two fingers zooms in', zoomedIn > 1.2, `${zoomedIn.toFixed(2)}x`);
+  await page.evaluate(() => globalThis.__td.renderer.recentre());
+  const zoomedOut = await pinch(-4);
+  check('pinching two fingers zooms out', zoomedOut < 0.85, `${zoomedOut.toFixed(2)}x`);
+  await page.screenshot({ path: path.join(SHOTS, 'phone-zoomed-out.png') });
+
+  const limits = await page.evaluate(async () => {
+    const { renderer, BALANCE } = globalThis.__td;
+    const rect = document.getElementById('game').getBoundingClientRect();
+    for (let i = 0; i < 40; i++) renderer.zoomAt(0.8, rect.left + rect.width / 2, rect.top + rect.height / 2);
+    const min = renderer.camera.zoom;
+    for (let i = 0; i < 60; i++) renderer.zoomAt(1.25, rect.left + rect.width / 2, rect.top + rect.height / 2);
+    const max = renderer.camera.zoom;
+    return { min, max, floor: BALANCE.camera.minZoom, ceil: BALANCE.camera.maxZoom };
+  });
+  check('zoom stops at both limits', limits.min === limits.floor && limits.max === limits.ceil,
+    JSON.stringify(limits));
+
+  // the recentre button puts it back
+  await page.locator('#btn-centre').click();
+  await page.waitForTimeout(120);
+  const recentred = await page.evaluate(() => {
+    const { renderer, LEVEL } = globalThis.__td;
+    return renderer.camera.zoom === 1
+      && Math.abs(renderer.camera.x - LEVEL.center.x) < 0.01
+      && Math.abs(renderer.camera.y - LEVEL.center.y) < 0.01;
+  });
+  check('the recentre button restores the opening view', recentred);
 
   await page.evaluate(() => { globalThis.__td.game.hardReset(); globalThis.__td.renderPanel(); });
 

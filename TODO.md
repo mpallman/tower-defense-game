@@ -8,11 +8,11 @@ first; nothing important lives only in a chat log.
 **Branch and deploy.** Work on `claude/create-claude-md-p5kzrk`. It is the
 repo's default branch and GitHub Pages deploys straight from it, so a push is a
 deploy — there is no PR, no merge, no staging. Bump `CACHE` in `sw.js` on every
-change (`vault-defense-v7` → `-v8`), or phones with the game installed keep
+change (`vault-defense-v8` → `-v9`), or phones with the game installed keep
 serving the old build from cache. After a deploy the phone needs two reloads:
 the first fetches, the second swaps the new cache in.
 
-**Tests.** `node test/run.mjs`. 87 checks, all passing as of the UI pass.
+**Tests.** `node test/run.mjs`. 97 checks, all passing as of the camera pass.
 It boots the real page in headless Chromium, so it catches things unit tests
 would not. It needs no install: Playwright is installed globally in the dev
 container and the script resolves it via `npm root -g`, which keeps the repo at
@@ -67,6 +67,18 @@ each keep a separate save.
   about two seconds.
 - `game.js` owns the level geometry (path, distances) because it is geometry,
   not balance. Balance numbers never appear outside `balance.js`.
+- The arena (`BALANCE.world`) is bigger than one screenful and has its own
+  origin, which is negative: it was grown *around* the fixed path instead of
+  the path being moved, so towers saved before the world got bigger kept their
+  exact spots and enemy walking distance never changed. Zoom 1 shows exactly
+  the `viewWidth` x `viewHeight` the old fixed view showed.
+- The camera lives entirely in `render.js`. `toLogical` and `toClient` are the
+  only two functions that know about it; the simulation, placement rules and
+  drag logic are all in world coordinates. Tests aim with `toClient` rather
+  than doing letterbox arithmetic, so they survive framing changes.
+- The drag ghost's lift above the finger is applied in *screen* pixels by the
+  input layer, not world units by `moveDrag` — a world-space lift vanishes
+  under the thumb as you zoom out.
 - Saves carry `schemaVersion` (currently 2) and migrate in a chain: 0 → 1 → 2.
   Migrations must describe the *old* data — the 1 → 2 migration keeps its own
   frozen copy of the deleted slot table rather than importing the live level.

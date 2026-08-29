@@ -3,9 +3,23 @@
 
 export const BALANCE = {
   world: {
-    width: 360,          // logical px; the canvas is scaled to fit the phone
-    height: 480,
+    // The arena: every spot you may build on. The path (game.js) sits inside
+    // it. The arena was grown *around* the path rather than the path being
+    // moved, so towers saved before the world got bigger keep their exact
+    // positions, and enemy walking distance is untouched.
+    x: -180, y: -210,
+    width: 720, height: 900,
+    // What one screenful shows at zoom 1 — the old fixed view, so the game
+    // still opens framed the way it always was.
+    viewWidth: 360, viewHeight: 480,
     pathWidth: 26,
+  },
+
+  camera: {
+    minZoom: 0.42,       // far enough out to see the whole arena on a phone
+    maxZoom: 2.4,
+    panSlop: 8,          // px of travel before a touch counts as a pan, not a tap
+    wheelZoom: 0.0018,   // desktop wheel sensitivity
   },
 
   economy: {
@@ -81,7 +95,7 @@ export const BALANCE = {
     minSpacing: 26,       // closest two tower centres may sit
     vaultClearance: 36,   // keep the vault readable
     edgeMargin: 14,       // keep towers fully inside the logical world
-    dragGrabOffset: -30,  // ghost sits above the finger so it isn't hidden
+    dragGrabOffset: -30,  // screen px the ghost floats above the finger
     dragHoldMs: 180,      // hold this long on a card before it becomes a drag
     dragSlop: 10,         // px of finger travel that means "I am scrolling"
   },

@@ -1,8 +1,15 @@
 # CLAUDE.md — tower defense game
 
-An idle tower-defense game that runs in a phone browser. Second game project;
-the first is RHEA_game (Godot) and is entirely unrelated — do not import
-patterns or assumptions from it.
+A tower-defense game that runs in a phone browser. Second game project; the
+first is RHEA_game (Godot) and is entirely unrelated — do not import patterns
+or assumptions from it.
+
+**It is not an idle/incremental game.** It runs on its own without constant
+input — you are not clicking a cookie — but it is meant to be played actively,
+in sessions, with your attention on it. Do not reach for idle-genre reflexes:
+systems may fail hard, a run can be lost, and "but what if they close the app
+for eight hours" is not an argument that outranks moment-to-moment play.
+Offline income exists so a session can be picked back up, not as the point.
 
 ## Concept
 
@@ -21,11 +28,13 @@ Tone: cold, clean, readable at a glance on a small screen.
 2. Towers fire automatically. Kills drop currency.
 3. Player spends currency on new towers and on upgrades (damage, range, rate).
 4. Towers are placed freely anywhere off the path, by dragging them out of the
-   build panel. No fixed slots.
+   build panel. No fixed slots. The arena is larger than the screen: one finger
+   pans, two pinch to zoom, and a touch that goes nowhere is a tap.
 5. Every N waves a boss appears; failure resets to wave 1 keeping upgrades.
 6. Prestige converts lifetime earnings into a permanent multiplier and wipes
    the run.
-7. Closing the game accrues offline income, capped at 8 hours.
+7. Closing the game accrues offline income, capped at 8 hours. This is a
+   convenience for picking a session back up, not the core of the game.
 
 ## Tech stack
 
@@ -44,6 +53,12 @@ Tone: cold, clean, readable at a glance on a small screen.
 Already split into ES modules loaded with `<script type="module">`, no build
 step. Keep any single module under ~800 lines; split by responsibility rather
 than growing one file.
+
+The world is a fixed arena, larger than the viewport, with the enemy path
+sitting inside it. The arena grew *around* the path rather than the path being
+moved, so coordinates from older saves still mean what they meant. `render.js`
+owns the camera; everything else works in world coordinates and never needs to
+know where the view is pointing.
 
 The panel is built once per tab and then synced in place: every changing value
 registers an updater closure at build time, and one cheap pass per frame writes

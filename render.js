@@ -12,8 +12,7 @@ import {
 
 export function createRenderer(canvas) {
   const ctx = canvas.getContext('2d');
-  const W = BALANCE.world.width;
-  const H = BALANCE.world.height;
+  const WORLD = BALANCE.world;
 
   const hulls = {};
   const rings = {};
@@ -28,23 +27,83 @@ export function createRenderer(canvas) {
     towerHeads[key] = bakeTowerHead(key, def);
   }
 
-  let scale = 1, dpr = 1;
+  // ------------------------------------------------------------- camera ---
+  // The arena is bigger than the screen, so the view is a window onto it:
+  // `camera` is the world point at the centre of the canvas, and `zoom` is a
+  // multiplier on the scale that fits one viewWidth x viewHeight screenful.
+  // Zoom 1 therefore frames the game exactly as the fixed view used to.
+  const camera = { x: LEVEL.center.x, y: LEVEL.center.y, zoom: 1 };
+  let baseScale = 1, scale = 1, dpr = 1, cssW = 1, cssH = 1;
+
+  const clamp = (v, lo, hi) => (lo > hi ? (lo + hi) / 2 : Math.max(lo, Math.min(hi, v)));
+
+  // Half the visible world, in world units.
+  function halfView() {
+    return { w: cssW / scale / 2, h: cssH / scale / 2 };
+  }
+
+  // Never let the player push the arena off the screen. When the arena is
+  // narrower than the view it simply centres instead.
+  function clampCamera() {
+    const half = halfView();
+    camera.x = clamp(camera.x, WORLD.x + half.w, WORLD.x + WORLD.width - half.w);
+    camera.y = clamp(camera.y, WORLD.y + half.h, WORLD.y + WORLD.height - half.h);
+  }
+
+  function applyZoom(next) {
+    camera.zoom = clamp(next, BALANCE.camera.minZoom, BALANCE.camera.maxZoom);
+    scale = baseScale * camera.zoom;
+    clampCamera();
+  }
 
   function resize() {
     const rect = canvas.getBoundingClientRect();
     dpr = Math.min(globalThis.devicePixelRatio || 1, 3);
-    const cssW = Math.max(1, rect.width);
-    const cssH = Math.max(1, rect.height);
+    cssW = Math.max(1, rect.width);
+    cssH = Math.max(1, rect.height);
     canvas.width = Math.round(cssW * dpr);
     canvas.height = Math.round(cssH * dpr);
-    scale = Math.min(cssW / W, cssH / H);
+    baseScale = Math.min(cssW / WORLD.viewWidth, cssH / WORLD.viewHeight);
+    applyZoom(camera.zoom);
   }
 
   function toLogical(clientX, clientY) {
     const rect = canvas.getBoundingClientRect();
-    const offX = (rect.width - W * scale) / 2;
-    const offY = (rect.height - H * scale) / 2;
-    return { x: (clientX - rect.left - offX) / scale, y: (clientY - rect.top - offY) / scale };
+    return {
+      x: camera.x + (clientX - rect.left - cssW / 2) / scale,
+      y: camera.y + (clientY - rect.top - cssH / 2) / scale,
+    };
+  }
+
+  // The inverse, so callers (and tests) can aim at a world point on screen.
+  function toClient(worldX, worldY) {
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: rect.left + cssW / 2 + (worldX - camera.x) * scale,
+      y: rect.top + cssH / 2 + (worldY - camera.y) * scale,
+    };
+  }
+
+  function panBy(dxClient, dyClient) {
+    camera.x -= dxClient / scale;
+    camera.y -= dyClient / scale;
+    clampCamera();
+  }
+
+  // Zoom about a fixed screen point, so the world under the fingers stays put.
+  function zoomAt(factor, clientX, clientY) {
+    const before = toLogical(clientX, clientY);
+    applyZoom(camera.zoom * factor);
+    const after = toLogical(clientX, clientY);
+    camera.x += before.x - after.x;
+    camera.y += before.y - after.y;
+    clampCamera();
+  }
+
+  function recentre() {
+    camera.x = LEVEL.center.x;
+    camera.y = LEVEL.center.y;
+    applyZoom(1);
   }
 
   // Drawn across the whole visible area so letterboxing never shows as bars.
@@ -382,54 +441,110 @@ export function createRenderer(canvas) {
 
   // Wave, count and enemy hp live in the DOM header now; the canvas only shows
   // what belongs on the field itself.
+  // Screen furniture: drawn in css pixels, so it never zooms or slides with
+  // the world underneath it.
   function drawOverlay(game) {
     const state = game.state;
+    ctx.save();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     if (state.paused) {
-      ctx.save();
       ctx.fillStyle = 'rgba(7,11,18,0.55)';
-      ctx.fillRect(0, 0, W, H);
+      ctx.fillRect(0, 0, cssW, cssH);
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.font = '800 22px system-ui, sans-serif';
       ctx.fillStyle = PALETTE.text;
-      ctx.fillText('PAUSED', W / 2, H / 2 - 8);
+      ctx.fillText('PAUSED', cssW / 2, cssH / 2 - 8);
       ctx.font = '600 12px system-ui, sans-serif';
       ctx.fillStyle = PALETTE.dim;
-      ctx.fillText('you can still build and sell', W / 2, H / 2 + 14);
-      ctx.restore();
+      ctx.fillText('you can still build and sell', cssW / 2, cssH / 2 + 14);
     }
 
     if (state.banner) {
       const t = state.banner.life / state.banner.max;
-      ctx.save();
       ctx.globalAlpha = Math.min(1, t * 2);
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.font = '800 24px system-ui, sans-serif';
       ctx.fillStyle = state.banner.text === 'VAULT BREACHED' ? PALETTE.danger : PALETTE.text;
-      ctx.fillText(state.banner.text, W / 2, H * 0.28);
-      ctx.restore();
+      ctx.fillText(state.banner.text, cssW / 2, cssH * 0.22);
+      ctx.globalAlpha = 1;
     }
+
+    // Zoom readout, only while it is not 1 — otherwise it is just noise.
+    if (Math.abs(camera.zoom - 1) > 0.02) {
+      ctx.font = '700 10px system-ui, sans-serif';
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'top';
+      ctx.fillStyle = PALETTE.dim;
+      ctx.fillText(`${camera.zoom.toFixed(2)}x`, cssW - 8, 8);
+    }
+    ctx.restore();
+  }
+
+  // The edge of buildable land, and the gate the enemies come out of. Both
+  // exist because the arena is now bigger than the screen: without them you
+  // cannot tell where the world stops or where the wave enters.
+  function drawArena(view) {
+    ctx.save();
+    ctx.fillStyle = 'rgba(3,6,12,0.55)';
+    // four bands covering everything outside the arena
+    const x0 = WORLD.x, y0 = WORLD.y, x1 = WORLD.x + WORLD.width, y1 = WORLD.y + WORLD.height;
+    if (view.y0 < y0) ctx.fillRect(view.x0, view.y0, view.x1 - view.x0, y0 - view.y0);
+    if (view.y1 > y1) ctx.fillRect(view.x0, y1, view.x1 - view.x0, view.y1 - y1);
+    if (view.x0 < x0) ctx.fillRect(view.x0, Math.max(view.y0, y0), x0 - view.x0, Math.min(view.y1, y1) - Math.max(view.y0, y0));
+    if (view.x1 > x1) ctx.fillRect(x1, Math.max(view.y0, y0), view.x1 - x1, Math.min(view.y1, y1) - Math.max(view.y0, y0));
+    ctx.strokeStyle = rgba('#22314c', 0.9);
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([10, 8]);
+    ctx.strokeRect(x0, y0, WORLD.width, WORLD.height);
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  function drawSpawnGate(time) {
+    const [x, y] = LEVEL.path[0];
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.strokeStyle = rgba('#ff7a59', 0.5);
+    ctx.lineWidth = 2;
+    for (let i = 0; i < 3; i++) {
+      const r = 10 + i * 5;
+      const phase = (time * 0.6 + i * 0.33) % 1;
+      ctx.globalAlpha = 0.5 * (1 - phase);
+      ctx.beginPath();
+      ctx.arc(0, 0, r + phase * 6, -Math.PI / 2, Math.PI / 2);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = rgba('#ff7a59', 0.7);
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(0, -BALANCE.world.pathWidth / 2 - 3);
+    ctx.lineTo(0, BALANCE.world.pathWidth / 2 + 3);
+    ctx.stroke();
+    ctx.restore();
   }
 
   function draw(game) {
-    const rect = { w: canvas.width, h: canvas.height };
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, rect.w, rect.h);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = PALETTE.bg;
-    ctx.fillRect(0, 0, rect.w, rect.h);
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    const offX = (rect.w / dpr - W * scale) / 2;
-    const offY = (rect.h / dpr - H * scale) / 2;
-    ctx.setTransform(scale * dpr, 0, 0, scale * dpr, offX * dpr, offY * dpr);
+    const k = scale * dpr;
+    ctx.setTransform(k, 0, 0, k, (cssW / 2 - camera.x * scale) * dpr, (cssH / 2 - camera.y * scale) * dpr);
 
+    const half = halfView();
     const view = {
-      x0: -offX / scale, y0: -offY / scale,
-      x1: W + offX / scale, y1: H + offY / scale,
+      x0: camera.x - half.w, y0: camera.y - half.h,
+      x1: camera.x + half.w, y1: camera.y + half.h,
     };
     drawBackground(view);
+    drawArena(view);
     drawPath(game.state.time);
+    drawSpawnGate(game.state.time);
     drawVault(game);
     drawTowers(game);
     drawEnemies(game);
@@ -444,6 +559,11 @@ export function createRenderer(canvas) {
     draw,
     resize,
     toLogical,
+    toClient,
+    panBy,
+    zoomAt,
+    recentre,
+    camera,
     get scale() { return scale; },
     spriteCount: () => Object.keys(hulls).length + Object.keys(rings).length
       + Object.keys(towerBases).length + Object.keys(towerHeads).length,
