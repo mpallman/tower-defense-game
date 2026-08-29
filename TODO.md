@@ -8,11 +8,11 @@ first; nothing important lives only in a chat log.
 **Branch and deploy.** Work on `claude/create-claude-md-p5kzrk`. It is the
 repo's default branch and GitHub Pages deploys straight from it, so a push is a
 deploy — there is no PR, no merge, no staging. Bump `CACHE` in `sw.js` on every
-change (`vault-defense-v6` → `-v7`), or phones with the game installed keep
+change (`vault-defense-v7` → `-v8`), or phones with the game installed keep
 serving the old build from cache. After a deploy the phone needs two reloads:
 the first fetches, the second swaps the new cache in.
 
-**Tests.** `node test/run.mjs`. 77 checks, all passing as of the UI pass.
+**Tests.** `node test/run.mjs`. 87 checks, all passing as of the UI pass.
 It boots the real page in headless Chromium, so it catches things unit tests
 would not. It needs no install: Playwright is installed globally in the dev
 container and the script resolves it via `npm root -g`, which keeps the repo at
@@ -85,6 +85,14 @@ each keep a separate save.
   in the panel is destroyed while you are touching it.
 - Wave, count, roster and enemy hp live in the DOM header. The canvas draws the
   field only — no HUD text, so nothing is stated twice.
+- Dragging a tower out of the panel is a *hold*, not a press. A finger on a
+  card is ambiguous — scroll or grab? — so the card waits `dragHoldMs` and
+  gives up the moment the finger travels `dragSlop`. Once it has picked up, the
+  panel's `touchmove` is preventDefault-ed, because `touch-action` is fixed for
+  the whole gesture and cannot be tightened mid-drag. A mouse skips all of this
+  and picks up on press. The touch tests drive real touch through CDP; synthetic
+  DOM events cannot test this, since the browser's own scrolling is the thing
+  being competed with.
 - Cosmetic events (`shot`, `kill`, `leak`) are only emitted when
   `api.cosmetics` is true, so a fast-forward doesn't generate millions of them.
 

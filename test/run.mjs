@@ -259,6 +259,107 @@ async function main() {
   check('dropping on a legal spot builds the tower', dropped.count === 1 && Math.abs(dropped.y - 120) <= 2,
     JSON.stringify(dropped));
 
+  // --- touch gestures ------------------------------------------------------
+  // A finger on a card is ambiguous — scroll, or pick the tower up? Synthetic
+  // DOM events cannot answer that, because the browser's own scrolling is what
+  // competes with us. These drive real touch input through the debug protocol.
+  section('touch');
+  const cdp = await context.newCDPSession(page);
+  const touch = (type, x, y) => cdp.send('Input.dispatchTouchEvent', {
+    type,
+    touchPoints: type === 'touchEnd' ? [] : [{ x, y, radiusX: 12, radiusY: 12, force: 1, id: 1 }],
+  });
+  const panelState = () => page.evaluate(() => {
+    const panel = document.getElementById('panel');
+    return { scroll: Math.round(panel.scrollTop), max: Math.round(panel.scrollHeight - panel.clientHeight) };
+  });
+  async function armPanel() {
+    await page.evaluate(() => {
+      const { game, ui } = globalThis.__td;
+      game.hardReset();
+      game.state.credits = 5_000;
+      game.buildTower(30, 120, 'turret');
+      game.state.selected = game.state.towers[0].id;   // the selection card makes it overflow
+      ui.rebuild();
+      ui.sync();
+      document.getElementById('panel').scrollTop = 0;
+    });
+    await page.waitForTimeout(150);
+    return (await page.locator('#panel .card.tower').first().boundingBox());
+  }
+
+  let card = await armPanel();
+  const overflow = await panelState();
+  check('the build panel actually overflows, so scrolling means something',
+    overflow.max > 40, `${overflow.max}px of scroll`);
+
+  // a flick across a card must scroll, not grab
+  let fx = card.x + card.width / 2;
+  let fy = card.y + card.height / 2;
+  await touch('touchStart', fx, fy);
+  for (let i = 1; i <= 10; i++) { await touch('touchMove', fx, fy - i * 8); await page.waitForTimeout(16); }
+  await touch('touchEnd', fx, fy - 80);
+  await page.waitForTimeout(200);
+  const flicked = await panelState();
+  const flickedTowers = await page.evaluate(() => ({
+    towers: globalThis.__td.game.state.towers.length,
+    dragging: !!globalThis.__td.game.state.drag,
+  }));
+  check('a flick over a tower card scrolls the panel', flicked.scroll > 20, `${flicked.scroll}px`);
+  check('scrolling never picks a tower up', !flickedTowers.dragging && flickedTowers.towers === 1,
+    JSON.stringify(flickedTowers));
+
+  // holding still picks it up, and the panel must not scroll away underneath
+  card = await armPanel();
+  fx = card.x + card.width / 2;
+  fy = card.y + card.height / 2;
+  const dropPoint = await page.evaluate(() => {
+    const { renderer, BALANCE } = globalThis.__td;
+    const rect = document.getElementById('game').getBoundingClientRect();
+    const s = renderer.scale;
+    const grab = BALANCE.build.dragGrabOffset;
+    return {
+      x: rect.left + (rect.width - 360 * s) / 2 + 150 * s,
+      y: rect.top + (rect.height - 480 * s) / 2 + (120 - grab) * s,
+    };
+  });
+  await touch('touchStart', fx, fy);
+  await page.waitForTimeout(320);
+  const heldDrag = await page.evaluate(() => !!globalThis.__td.game.state.drag);
+  check('holding a card picks the tower up', heldDrag);
+  for (let i = 1; i <= 12; i++) {
+    await touch('touchMove', fx + (dropPoint.x - fx) * i / 12, fy + (dropPoint.y - fy) * i / 12);
+    await page.waitForTimeout(16);
+  }
+  await touch('touchEnd', dropPoint.x, dropPoint.y);
+  await page.waitForTimeout(200);
+  const afterTouchDrop = await panelState();
+  const touchBuilt = await page.evaluate(() => {
+    const towers = globalThis.__td.game.state.towers;
+    const last = towers[towers.length - 1];
+    return { count: towers.length, x: Math.round(last.x), y: Math.round(last.y) };
+  });
+  check('a held drag places the tower by touch',
+    touchBuilt.count === 2 && Math.abs(touchBuilt.y - 120) <= 2, JSON.stringify(touchBuilt));
+  check('the panel does not scroll out from under a drag', afterTouchDrop.scroll === 0,
+    `${afterTouchDrop.scroll}px`);
+
+  // picking up and putting back down is a cancel, not a failed placement
+  card = await armPanel();
+  await touch('touchStart', card.x + card.width / 2, card.y + card.height / 2);
+  await page.waitForTimeout(320);
+  await touch('touchEnd', card.x + card.width / 2, card.y + card.height / 2);
+  await page.waitForTimeout(200);
+  const putBack = await page.evaluate(() => ({
+    towers: globalThis.__td.game.state.towers.length,
+    dragging: !!globalThis.__td.game.state.drag,
+    complaining: document.getElementById('toast').classList.contains('show'),
+  }));
+  check('releasing back on the panel cancels quietly',
+    putBack.towers === 1 && !putBack.dragging && !putBack.complaining, JSON.stringify(putBack));
+
+  await page.evaluate(() => { globalThis.__td.game.hardReset(); globalThis.__td.renderPanel(); });
+
   // --- save / reload -----------------------------------------------------  // --- save / reload -----------------------------------------------------
   section('save and reload');
   const saved = await page.evaluate(() => {

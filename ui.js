@@ -224,7 +224,7 @@ export function createUI({ game, audio, toast, makeDraggable }) {
       { icon: 'range', title: 'range', read: () => Math.round(game.towerStats({ type: key }).range) },
     ]));
 
-    card.append(tile(towerSpriteUrl(key, 46)), body, costTag(() => game.towerCost(key), { hint: 'drag out' }));
+    card.append(tile(towerSpriteUrl(key, 46)), body, costTag(() => game.towerCost(key), { hint: 'hold to drag' }));
 
     bind(() => {
       const count = state.towers.filter((t) => t.type === key).length;

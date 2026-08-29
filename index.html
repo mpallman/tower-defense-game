@@ -169,7 +169,7 @@
   .card.poor { opacity: .74; }
   .card:disabled { opacity: .5; }
   .card.on { border-color: var(--accent); box-shadow: 0 0 0 1px rgba(56,189,248,.3), 0 0 20px rgba(56,189,248,.1); }
-  .row.drag { touch-action: none; }
+  .row.drag { touch-action: pan-y; }
   .row.dragging { opacity: .45; border-color: var(--accent); }
 
   .tile {
@@ -349,32 +349,87 @@ canvas.addEventListener('pointerdown', (ev) => {
 // Drag a tower out of the build panel and onto the map. Pointer capture keeps
 // the events coming to the card even once the finger is over the canvas.
 function makeDraggable(el, type) {
+  const b = BALANCE.build;
   el.classList.add('drag');
+
+  // A finger on a card is ambiguous: it might be starting a drag, or it might
+  // be starting a scroll. Resolve it by waiting — a short hold with the finger
+  // still means "pick this up", any real travel before then means "scroll".
+  // A mouse has no such ambiguity, so it picks up on press.
+  let hold = null;
+
+  function cancelHold() {
+    if (hold) { clearTimeout(hold.timer); hold = null; }
+  }
+
+  function beginDrag(pointerId, clientX, clientY) {
+    cancelHold();
+    // Throws for a pointer the element does not own; a lost capture only means
+    // the events keep going to whatever is under the finger.
+    try { el.setPointerCapture(pointerId); } catch { /* not fatal */ }
+    el.classList.add('dragging');
+    navigator.vibrate?.(8);
+    game.startDrag(type);
+    const p = renderer.toLogical(clientX, clientY);
+    game.moveDrag(p.x, p.y);
+  }
+
+  // Released over the play field means place it; released anywhere else — the
+  // panel it came from, the tabs — means "never mind".
+  function overStage(ev) {
+    const r = canvas.getBoundingClientRect();
+    return ev.clientX >= r.left && ev.clientX <= r.right
+      && ev.clientY >= r.top && ev.clientY <= r.bottom;
+  }
+
   el.addEventListener('pointerdown', (ev) => {
     if (el.disabled) return;
     audio.unlock();
-    el.setPointerCapture(ev.pointerId);
-    el.classList.add('dragging');
-    game.startDrag(type);
-    const p = renderer.toLogical(ev.clientX, ev.clientY);
-    game.moveDrag(p.x, p.y);
+    if (ev.pointerType === 'mouse') { beginDrag(ev.pointerId, ev.clientX, ev.clientY); return; }
+    cancelHold();
+    hold = { id: ev.pointerId, x: ev.clientX, y: ev.clientY };
+    hold.timer = setTimeout(() => {
+      const h = hold;
+      if (h) beginDrag(h.id, h.x, h.y);
+    }, b.dragHoldMs);
   });
+
   el.addEventListener('pointermove', (ev) => {
+    if (hold && ev.pointerId === hold.id) {
+      if (Math.hypot(ev.clientX - hold.x, ev.clientY - hold.y) > b.dragSlop) cancelHold();
+      return;
+    }
     if (!game.state.drag) return;
     ev.preventDefault();
     const p = renderer.toLogical(ev.clientX, ev.clientY);
     game.moveDrag(p.x, p.y);
   });
+
   el.addEventListener('pointerup', (ev) => {
+    cancelHold();
     el.classList.remove('dragging');
     if (!game.state.drag) return;
     if (el.hasPointerCapture?.(ev.pointerId)) el.releasePointerCapture(ev.pointerId);
+    if (!overStage(ev)) { game.cancelDrag(); ui.sync(); return; }
     const res = game.dropDrag();
     if (!res.ok && res.reason && res.reason !== 'cancelled') { audio.play('deny'); showToast(res.reason); }
     ui.sync();
   });
-  el.addEventListener('pointercancel', () => { el.classList.remove('dragging'); game.cancelDrag(); });
+
+  el.addEventListener('pointercancel', () => {
+    cancelHold();
+    el.classList.remove('dragging');
+    game.cancelDrag();
+  });
 }
+
+// Once a card has been picked up, the panel must not scroll out from under it.
+// touch-action is fixed for the whole gesture, so the scroll has to be refused
+// here instead — and it can be, because the hold ended with the finger still,
+// which means no scroll had started yet.
+document.getElementById('panel').addEventListener('touchmove', (ev) => {
+  if (game.state.drag) ev.preventDefault();
+}, { passive: false });
 
 // --------------------------------------------------------------------- ui --
 const ui = createUI({ game, audio, toast: showToast, makeDraggable });

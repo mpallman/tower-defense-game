@@ -82,6 +82,8 @@ export const BALANCE = {
     vaultClearance: 36,   // keep the vault readable
     edgeMargin: 14,       // keep towers fully inside the logical world
     dragGrabOffset: -30,  // ghost sits above the finger so it isn't hidden
+    dragHoldMs: 180,      // hold this long on a card before it becomes a drag
+    dragSlop: 10,         // px of finger travel that means "I am scrolling"
   },
 
   prestige: {
