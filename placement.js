@@ -88,6 +88,7 @@ export function buildTower(state, x, y, type) {
   const tower = {
     id: state.nextId++, type, x, y, spent: cost,
     cooldown: 0, angle: -Math.PI / 2, recoil: 0, kills: 0, damageDone: 0, starved: false,
+    beamHold: 0, beamPulse: 0, beamX: 0, beamY: 0,
   };
   state.towers.push(tower);
   return { ok: true, cost, id: tower.id, tower };

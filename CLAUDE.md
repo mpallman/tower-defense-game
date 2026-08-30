@@ -64,6 +64,12 @@ Already split into ES modules loaded with `<script type="module">`, no build
 step. Keep any single module under ~800 lines; split by responsibility rather
 than growing one file.
 
+All art obeys one material system (`paint.js`): a single light direction for
+the whole game, warm on the lit face and cool in shadow, baked grain on every
+surface, and one emissive focal point per subject. A sprite that lights itself
+its own way is the thing that makes procedural art look auto-generated, so new
+art goes through those helpers rather than inventing its own gradients.
+
 The world is a fixed arena, larger than the viewport, with the enemy path
 sitting inside it. The arena grew *around* the path rather than the path being
 moved, so coordinates from older saves still mean what they meant. `render.js`
@@ -146,7 +152,10 @@ just did unless I ask.
     derive.js             pure numbers read off BALANCE and state
     placement.js          where a thing may stand, and building or selling it
     economy.js            resource stock, production, and who may draw on it
-    sprites.js            procedural sprite baking, shared by canvas and DOM
+    paint.js              the material system: one light, colour maths, grain
+    sprites.js            baked art for the things that fight: enemies, towers
+    structures.js         baked art for buildings and ore nodes
+    ground.js             the baked, tiling arena floor and its lighting
     render.js             the play field: background, path, entities, effects
     icons.js              DOM-facing art: sprite tiles and inline SVG glyphs
     ui.js                 HUD, wave bar, and the three tab panels

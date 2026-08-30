@@ -211,6 +211,13 @@ export const BALANCE = {
     particleLife: 0.5,
     recoilSeconds: 0.13,  // how long a barrel stays kicked back after firing
     hitRingSeconds: 0.18,
+    // A laser is a held beam, not a stream of shots. `beamHold` is how far
+    // past the next shot the line stays lit, so it never strobes at the fire
+    // rate; `beamPulseSeconds` is how long the brighter flare of one damage
+    // tick takes to fall back to the steady beam.
+    beamHold: 0.1,
+    beamPulseSeconds: 0.09,
+    beamWidth: 1.15,      // core thickness in logical px; the glow scales off it
   },
 
   controls: {

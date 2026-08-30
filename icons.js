@@ -14,7 +14,8 @@
 // Nothing here downloads anything: both kinds are generated at runtime.
 
 import { BALANCE } from './balance.js';
-import { bakeHull, bakeRing, bakeTowerBase, bakeTowerHead, bakeBuilding, bakeOreNode, blit } from './sprites.js';
+import { bakeHull, bakeRing, bakeTowerBase, bakeTowerHead, blit } from './sprites.js';
+import { bakeBuilding, bakeOreNode } from './structures.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -49,7 +50,7 @@ function paintTile(px, radius, drawFn) {
 function towerParts(key) {
   if (!towerLayers.has(key)) {
     const def = BALANCE.towers[key];
-    towerLayers.set(key, { base: bakeTowerBase(def), head: bakeTowerHead(key, def) });
+    towerLayers.set(key, { base: bakeTowerBase(key, def), head: bakeTowerHead(key, def) });
   }
   return towerLayers.get(key);
 }

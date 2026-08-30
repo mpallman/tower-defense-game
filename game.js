@@ -210,10 +210,10 @@ export function createGame(options = {}) {
     if (!api.cosmetics) return;
     state.fx.push({ kind: 'ring', x, y, color, size, life: BALANCE.fx.hitRingSeconds, max: BALANCE.fx.hitRingSeconds });
   }
-  function beamFx(x1, y1, x2, y2, color) {
-    if (!api.cosmetics) return;
-    state.fx.push({ kind: 'beam', x1, y1, x2, y2, color, life: 0.08, max: 0.08 });
-  }
+  // A beam is not an effect that is spawned and forgotten: it is a state the
+  // tower is in. Firing refreshes `beamHold` a little past the next shot, so
+  // the line stays lit between ticks instead of strobing at the fire rate, and
+  // the endpoint is re-read every step so it tracks a walking target.
 
   // --- waves -------------------------------------------------------------
   function buildQueue(wave) {
@@ -397,22 +397,35 @@ export function createGame(options = {}) {
       // Judged every step, not only when there is something to shoot at: a
       // tower with no supply line has to show it while you are still building.
       tower.starved = !!towerProblem(state, tower);
+      if (tower.beamHold > 0) tower.beamHold = Math.max(0, tower.beamHold - dt);
+      if (tower.beamPulse > 0) {
+        tower.beamPulse = Math.max(0, tower.beamPulse - dt / BALANCE.fx.beamPulseSeconds);
+      }
+      // A beam pointing at nothing is worse than no beam, so losing the target
+      // or the supply cuts it in the same step rather than letting it fade out.
       const target = findTarget(tower, stats);
+      if (!target || tower.starved) tower.beamHold = 0;
       if (!target) continue;
       tower.angle = Math.atan2(target.y - tower.y, target.x - tower.x);
+      if (tower.beamHold > 0) { tower.beamX = target.x; tower.beamY = target.y; }
       if (tower.cooldown > 0) continue;
       // Supply is checked before the cooldown is spent, so a starved tower is
       // ready to fire the instant its line comes back rather than waiting out
       // a cooldown it never got to use.
       if (tower.starved || !payForShot(state, tower)) {
         tower.starved = true;
+        tower.beamHold = 0;
         continue;
       }
       tower.cooldown = 1 / stats.fireRate;
       tower.recoil = 1;
       if (api.cosmetics) api.onEvent({ type: 'shot', tower: tower.type });
       if (stats.beam) {
-        beamFx(tower.x, tower.y, target.x, target.y, BALANCE.towers[tower.type].color);
+        tower.beamHold = 1 / stats.fireRate + BALANCE.fx.beamHold;
+        tower.beamPulse = 1;
+        tower.beamX = target.x;
+        tower.beamY = target.y;
+        burst(target.x, target.y, BALANCE.towers[tower.type].color, 2);
         tower.damageDone += stats.damage;
         if (damageEnemy(target, stats.damage)) tower.kills += 1;
       } else {
@@ -732,6 +745,7 @@ export function createGame(options = {}) {
         id: state.nextId++, type: t.type, x: t.x, y: t.y,
         spent: num(t.spent, BALANCE.towers[t.type].cost),
         cooldown: 0, angle: -Math.PI / 2, recoil: 0, kills: num(t.kills, 0), damageDone: 0,
+        beamHold: 0, beamPulse: 0, beamX: 0, beamY: 0,
       });
     }
     state.buildings = [];

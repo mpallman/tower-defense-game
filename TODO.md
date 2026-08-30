@@ -12,7 +12,7 @@ change (`vault-defense-v11` → `-v12`), or phones with the game installed keep
 serving the old build from cache. After a deploy the phone needs two reloads:
 the first fetches, the second swaps the new cache in.
 
-**Tests.** `node test/run.mjs`. 133 checks, all passing as of the power-chain pass.
+**Tests.** `node test/run.mjs`. 133 checks, all passing as of the art pass.
 It boots the real page in headless Chromium, so it catches things unit tests
 would not. It needs no install: Playwright is installed globally in the dev
 container and the script resolves it via `npm root -g`, which keeps the repo at
@@ -23,6 +23,12 @@ three tower types, free placement by drag, global upgrades, bosses, prestige,
 offline income, save migration, sound, procedural music, pause and speed. The
 UI is card-based: every buyable thing shows the sprite it will put on the map,
 and the header shows the wave's enemies with their hp for this wave.
+
+The art has had one full pass against the material system above: every sprite
+relit, the floor rebuilt, and the laser turned from a stutter of short lines
+into a held beam. Nothing about the *balance* changed with it. Colour hues in
+`balance.js` are untouched and are still the owner's call — they are the most
+default-looking thing left, and worth a look next.
 
 **Nothing is balanced.** Every number in `balance.js` is a first guess. The
 owner plays and reports; do not tune the curve speculatively between reports.
@@ -86,6 +92,22 @@ each keep a separate save.
   those rules must never delete someone's towers.
 - Sprites are baked once into offscreen canvases at boot and blitted. Layers
   that move independently (hull vs ring, base vs head) are baked separately.
+- All art is lit by one material system in `paint.js`: a single light direction
+  for the whole game, a warm key and a *cool* shadow (the colour shift, not
+  just a darker fill, is what reads as shading), baked deterministic grain on
+  every surface, a dark keyline under every rim so shapes hold up against the
+  textured floor, and exactly one emissive focal point per subject. Nothing
+  invents its own gradient direction — sprites lit each on their own terms is
+  the thing that made the art look auto-generated.
+- Asymmetry is deliberate. Every hull, pad and building carries at least one
+  detail that exists on one side only, ring segments are seeded to uneven
+  lengths, windows are not all lit, and polygons are jittered off the perfect
+  circle. A for-loop that spaces N identical features around a centre is the
+  single most machine-drawn thing you can draw.
+- A subject's colour lives in its lights, edges and painted markings, never in
+  its fill. Buildings are edged in steel; tower pads are 85% steel with the hue
+  showing as a painted arc and chevron. A shape flooded with a saturated accent
+  reads as a UI chip dropped on the map.
 - `sprites.js` owns that baking so both the canvas (`render.js`) and the DOM
   (`icons.js`) draw from one source. A tower card shows the same art as the
   tower it builds, because it *is* the same art, composited into a data URL and
@@ -129,9 +151,18 @@ each keep a separate save.
   by hand. `freshRunState` builds the upgrade levels from `Object.keys`, because
   hardcoding them meant adding one upgrade turned every derived number into NaN
   with no error anywhere. A test now asserts no derived number is NaN.
-- Buildings are drawn in near-neutral steel with their colour only in edges and
-  lit windows, like the tower bases. A slab filled with the tint reads as a UI
-  chip dropped on the map and drowns out the towers and the wave.
+- The floor (`ground.js`) is one seamlessly tiling square — plating, seams,
+  cable runs, wear, grain — baked per zoom level and stamped tile by tile with
+  `drawImage`. Two dead ends are recorded here so they are not retried: a
+  `CanvasPattern` fill under the world transform doubled the frame time (every
+  floor pixel resampled every frame, and it broke panel scrolling in the touch
+  tests), and an unscaled pattern fill was worse still. Twenty 1:1 `drawImage`
+  calls beat both, and beat the old per-line grid loop.
+- The lighting over the floor — the pool around the vault, the slow sweep, the
+  vignette — is drawn into one buffer an eighth of the canvas size and blitted
+  up. They are smooth gradients, so nothing is lost, and it turns three
+  full-resolution alpha passes, which were the most expensive thing in the
+  frame, into one. Fill rate is the cost here, not maths.
 - Footprints: towers 12, buildings 20, and two things may not stand closer than
   the sum of their radii plus `spacingGap`. Tower-to-tower still works out at
   the 26 it has always been.

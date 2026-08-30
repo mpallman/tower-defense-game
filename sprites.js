@@ -5,14 +5,33 @@
 // (icons.js). Keeping one copy means a tower card in the build panel is the
 // same art as the tower standing on the map, not a lookalike drawn twice.
 //
+// This file draws the things that fight — enemies and towers. The things that
+// supply them live in structures.js, which shares every helper here.
+//
 // Anything that moves independently (a hull, a spinning ring, a turret head)
 // is baked as its own layer so it can be rotated separately at draw time —
 // that is where the sense of detail comes from, not from more pixels.
+//
+// Every surface here is lit by paint.js: one light for the whole game, warm
+// on the lit face and cool in shadow, grain on everything, and one emissive
+// focal point per subject. Three rules that stop a shape looking auto-drawn:
+//
+//   * Nothing is perfectly symmetric. Each subject carries one detail that
+//     exists on one side only, so the eye finds a front and a top.
+//   * Detail is not spread evenly. One bright feature, and everything else
+//     subordinate to it — even detail everywhere reads as noise at 8px.
+//   * The subject's colour lives in its lights and edges, not in its fill.
+//     A hull flooded with a saturated accent reads as a UI chip on the map.
 
 import { BALANCE } from './balance.js';
+import {
+  material, rim, contact, grain, scuff, emissive, shapePath,
+  blend, alpha as fade, tint, seedOf,
+} from './paint.js';
 
 export const SPRITE_SCALE = 3;
 export const TOWER_R = BALANCE.build.towerRadius;
+export const BUILDING_R = BALANCE.economy.buildingRadius;
 export const PALETTE = {
   bg: '#070b12',
   grid: '#0f1725',
@@ -25,8 +44,6 @@ export const PALETTE = {
   dim: '#7d8ba5',
   vault: '#38bdf8',
   danger: '#f43f5e',
-  steel: '#5b6c88',
-  steelDark: '#26324a',
 };
 
 export function makeCanvas(w, h) {
@@ -36,14 +53,7 @@ export function makeCanvas(w, h) {
 }
 
 export function polygonPath(ctx, cx, cy, radius, sides, rotation) {
-  ctx.beginPath();
-  for (let i = 0; i < sides; i++) {
-    const a = rotation + (i / sides) * Math.PI * 2;
-    const x = cx + Math.cos(a) * radius;
-    const y = cy + Math.sin(a) * radius;
-    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-  }
-  ctx.closePath();
+  shapePath(ctx, cx, cy, radius, sides, rotation);
 }
 
 export function shade(hex, amount) {
@@ -53,8 +63,7 @@ export function shade(hex, amount) {
 }
 
 export function rgba(hex, alpha) {
-  const n = parseInt(hex.slice(1), 16);
-  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`;
+  return fade(hex, alpha);
 }
 
 // Bake one layer. drawFn gets a context whose origin is the sprite centre and
@@ -76,201 +85,325 @@ export function blit(ctx, sprite) {
   ctx.drawImage(sprite.canvas, -sprite.radius, -sprite.radius, sprite.radius * 2, sprite.radius * 2);
 }
 
+// Fill a shape, light it, texture it and edge it in one move. `pathFn` must
+// leave a closed path on the context; it is called twice, because a path is
+// consumed by the fill. Shared with structures.js.
+export function surface(ctx, pathFn, r, opts = {}) {
+  const {
+    fill, edge, seed = 1, specks = 70, wear = 0, edgeWidth = 0.9, edgeStrength = 1,
+  } = opts;
+  pathFn();
+  ctx.fillStyle = fill;
+  ctx.fill();
+
+  ctx.save();
+  pathFn();
+  ctx.clip();
+  grain(ctx, r, seed, { count: specks });
+  if (wear) scuff(ctx, r, seed ^ 0x9e37, { count: wear });
+  ctx.restore();
+
+  if (edge) {
+    // A dark keyline under the rim. The floor has texture on it now, and
+    // without this the shadow side of a hull dissolves straight into it.
+    pathFn();
+    ctx.strokeStyle = 'rgba(3,6,12,0.7)';
+    ctx.lineWidth = edgeWidth + 1;
+    ctx.stroke();
+    pathFn();
+    ctx.strokeStyle = rim(ctx, r, edge, edgeStrength);
+    ctx.lineWidth = edgeWidth;
+    ctx.stroke();
+  }
+}
+
 // ------------------------------------------------------------- enemy art ---
 // Every enemy is a hull that faces the way it walks plus a ring that spins.
-// Distinct silhouettes matter more than surface detail at 8 logical pixels.
+// Distinct silhouettes matter more than surface detail at 8 logical pixels —
+// so each hull is asymmetric along the walking axis and carries exactly one
+// lit element, its eye.
 
 export function bakeHull(key, def) {
   return bake(def.radius, (ctx, r) => {
-    const body = ctx.createLinearGradient(-r, -r, r, r);
-    body.addColorStop(0, shade(def.color, 55));
-    body.addColorStop(0.55, def.color);
-    body.addColorStop(1, shade(def.color, -80));
+    const seed = seedOf('hull:' + key);
+    // The body is the enemy's hue drained most of the way to metal. Its colour
+    // comes back in the rim, the eye and the vents.
+    const body = blend(def.color, '#39404f', 0.5);
+    const hot = def.color;
+    const fill = material(ctx, r, body, { key: 0.5, shadow: 0.62 });
 
     if (key === 'swift') {
-      // a dart: sharp nose, swept fins, engine glow at the tail
+      // a dart: sharp nose, one canard longer than the other, engine at the tail
+      const hull = () => {
+        ctx.beginPath();
+        ctx.moveTo(r * 1.05, 0);
+        ctx.lineTo(r * 0.1, -r * 0.46);
+        ctx.lineTo(-r * 0.34, -r * 0.86);      // the long fin, port side only
+        ctx.lineTo(-r * 0.66, -r * 0.24);
+        ctx.lineTo(-r * 0.52, 0);
+        ctx.lineTo(-r * 0.66, r * 0.22);
+        ctx.lineTo(-r * 0.3, r * 0.58);
+        ctx.lineTo(r * 0.12, r * 0.4);
+        ctx.closePath();
+      };
+      surface(ctx, hull, r, { fill, edge: hot, seed, specks: 44, edgeWidth: 0.7 });
+
+      ctx.save();
+      hull();
+      ctx.clip();
+      ctx.fillStyle = 'rgba(5,8,15,0.55)';    // a spine shadow down one side
       ctx.beginPath();
-      ctx.moveTo(r, 0);
-      ctx.lineTo(-r * 0.2, -r * 0.72);
-      ctx.lineTo(-r * 0.75, -r * 0.3);
-      ctx.lineTo(-r * 0.55, 0);
-      ctx.lineTo(-r * 0.75, r * 0.3);
-      ctx.lineTo(-r * 0.2, r * 0.72);
+      ctx.moveTo(r * 1.05, 0);
+      ctx.lineTo(-r * 0.5, r * 0.5);
+      ctx.lineTo(-r * 0.5, -r * 0.02);
       ctx.closePath();
-      ctx.fillStyle = body;
       ctx.fill();
-      ctx.strokeStyle = shade(def.color, 95);
-      ctx.lineWidth = 0.9;
-      ctx.stroke();
+      ctx.restore();
+
+      emissive(ctx, -r * 0.5, 0, r * 0.16, hot, { bloom: 1.9 });
+      ctx.fillStyle = fade('#ffffff', 0.75);   // the nose sensor
       ctx.beginPath();
-      ctx.moveTo(r * 0.35, 0);
-      ctx.lineTo(-r * 0.3, -r * 0.18);
-      ctx.lineTo(-r * 0.3, r * 0.18);
-      ctx.closePath();
-      ctx.fillStyle = 'rgba(6,10,18,0.7)';
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(-r * 0.62, 0, r * 0.22, 0, Math.PI * 2);
-      ctx.fillStyle = shade(def.color, 120);
+      ctx.arc(r * 0.58, -r * 0.06, r * 0.1, 0, Math.PI * 2);
       ctx.fill();
       return;
     }
 
     if (key === 'hulk') {
-      // heavy: thick frontal armour, rivets, narrow slit of a core
-      polygonPath(ctx, 0, 0, r, 8, Math.PI / 8);
-      ctx.fillStyle = body;
-      ctx.fill();
-      ctx.strokeStyle = shade(def.color, 70);
-      ctx.lineWidth = 1.2;
-      ctx.stroke();
+      // heavy: a slab of frontal armour bolted on off-centre, scarred
+      const hull = () => shapePath(ctx, 0, 0, r, 8, Math.PI / 8, { jitter: 0.07, seed });
+      surface(ctx, hull, r, { fill, edge: hot, seed, specks: 110, wear: 4, edgeWidth: 1.1 });
 
+      ctx.save();
+      hull();
+      ctx.clip();
+      // the brow plate, riding higher on the port side
       ctx.beginPath();
-      ctx.arc(0, 0, r * 0.92, -0.85, 0.85);
-      ctx.lineWidth = r * 0.3;
-      ctx.strokeStyle = shade(def.color, -40);
+      ctx.moveTo(r * 0.2, -r * 1.05);
+      ctx.lineTo(r * 1.05, -r * 0.34);
+      ctx.lineTo(r * 1.05, r * 0.5);
+      ctx.lineTo(r * 0.28, r * 0.86);
+      ctx.closePath();
+      ctx.fillStyle = material(ctx, r, blend(def.color, '#39404f', 0.34), { key: 0.58, shadow: 0.46 });
+      ctx.fill();
+      ctx.strokeStyle = fade('#04070d', 0.55);
+      ctx.lineWidth = 0.7;
       ctx.stroke();
-
-      ctx.fillStyle = rgba('#ffffff', 0.35);
-      for (const a of [-0.6, 0, 0.6]) {
+      grain(ctx, r, seed ^ 0x51, { count: 40 });
+      // two bolts, clustered, not a ring of them
+      ctx.fillStyle = 'rgba(255,246,228,0.4)';
+      for (const [bx, by] of [[0.52, -0.5], [0.66, -0.2]]) {
         ctx.beginPath();
-        ctx.arc(Math.cos(a) * r * 0.78, Math.sin(a) * r * 0.78, 0.9, 0, Math.PI * 2);
+        ctx.arc(bx * r, by * r, 0.85, 0, Math.PI * 2);
         ctx.fill();
       }
+      ctx.restore();
 
+      // the viewing slit, sunk into the plate
       ctx.beginPath();
-      ctx.ellipse(0, 0, r * 0.42, r * 0.22, 0, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(4,8,14,0.85)';
+      ctx.ellipse(r * 0.34, r * 0.04, r * 0.34, r * 0.15, -0.12, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(3,6,11,0.9)';
       ctx.fill();
-      ctx.strokeStyle = shade(def.color, 110);
-      ctx.lineWidth = 0.8;
-      ctx.stroke();
+      emissive(ctx, r * 0.42, r * 0.03, r * 0.1, hot, { bloom: 1.9 });
       return;
     }
 
     if (key === 'boss') {
-      // layered core: a heavy shell with a cannon nub and a bright eye
-      polygonPath(ctx, 0, 0, r, 12, 0);
-      ctx.fillStyle = body;
+      // a fortress: blocky crown, one cannon nub, and an eye you cannot miss
+      const hull = () => shapePath(ctx, 0, 0, r, 9, 0.16, { jitter: 0.13, seed });
+      surface(ctx, hull, r, {
+        fill: material(ctx, r, blend(def.color, '#39404f', 0.46), { key: 0.5, shadow: 0.6 }),
+        edge: hot, seed, specks: 150, wear: 5, edgeWidth: 1.3,
+      });
+
+      ctx.save();
+      hull();
+      ctx.clip();
+      // an inner shell, rotated off the outer one so the two never line up
+      shapePath(ctx, -r * 0.05, -r * 0.04, r * 0.74, 6, 0.5, { jitter: 0.1, seed: seed ^ 7 });
+      ctx.fillStyle = 'rgba(6,10,18,0.62)';
       ctx.fill();
-      ctx.strokeStyle = shade(def.color, 90);
-      ctx.lineWidth = 1.4;
+      ctx.strokeStyle = fade(hot, 0.45);
+      ctx.lineWidth = 0.9;
       ctx.stroke();
+      grain(ctx, r, seed ^ 0x2b, { count: 60 });
+      ctx.restore();
 
-      polygonPath(ctx, 0, 0, r * 0.72, 6, Math.PI / 6);
-      ctx.fillStyle = 'rgba(6,10,18,0.6)';
-      ctx.fill();
-      ctx.strokeStyle = shade(def.color, 40);
-      ctx.lineWidth = 1;
-      ctx.stroke();
-
-      ctx.fillStyle = shade(def.color, -30);
-      ctx.fillRect(r * 0.55, -r * 0.16, r * 0.5, r * 0.32);
-      ctx.strokeStyle = shade(def.color, 80);
-      ctx.lineWidth = 0.7;
-      ctx.strokeRect(r * 0.55, -r * 0.16, r * 0.5, r * 0.32);
-
+      // the barrel: one, on the walking axis, sitting low
+      ctx.save();
+      ctx.rotate(0.1);
+      ctx.fillStyle = material(ctx, r * 0.5, '#6c7da2', { key: 0.55, shadow: 0.58 });
       ctx.beginPath();
-      ctx.arc(0, 0, r * 0.3, 0, Math.PI * 2);
-      ctx.fillStyle = '#ffe4e6';
+      ctx.roundRect
+        ? ctx.roundRect(r * 0.5, -r * 0.17, r * 0.62, r * 0.34, 1.5)
+        : ctx.rect(r * 0.5, -r * 0.17, r * 0.62, r * 0.34);
       ctx.fill();
+      ctx.strokeStyle = rim(ctx, r * 0.5, hot, 0.8);
+      ctx.lineWidth = 0.7;
+      ctx.stroke();
+      ctx.restore();
+
+      emissive(ctx, -r * 0.05, -r * 0.04, r * 0.2, '#fff1f2', { bloom: 1.8 });
       return;
     }
 
-    // grunt: plated hexagon with a sensor eye toward the front
-    polygonPath(ctx, 0, 0, r, 6, 0);
-    ctx.fillStyle = body;
-    ctx.fill();
-    ctx.strokeStyle = shade(def.color, 90);
-    ctx.lineWidth = 1.1;
+    // grunt: a plated hex, front-heavy, with a stub aerial on one shoulder
+    const hull = () => shapePath(ctx, 0, 0, r, 6, 0.08, { jitter: 0.09, seed });
+    surface(ctx, hull, r, { fill, edge: hot, seed, specks: 70, wear: 2, edgeWidth: 1 });
+
+    ctx.save();
+    hull();
+    ctx.clip();
+    // two panel seams on the lit side only, at different weights
+    ctx.strokeStyle = 'rgba(4,7,13,0.5)';
+    ctx.lineWidth = 0.75;
+    ctx.beginPath();
+    ctx.moveTo(-r * 0.9, -r * 0.34);
+    ctx.lineTo(r * 0.5, -r * 0.52);
+    ctx.stroke();
+    ctx.lineWidth = 0.45;
+    ctx.beginPath();
+    ctx.moveTo(-r * 0.6, r * 0.46);
+    ctx.lineTo(r * 0.35, r * 0.6);
+    ctx.stroke();
+    // a lit vent, off the centre line
+    ctx.fillStyle = fade(hot, 0.5);
+    ctx.fillRect(-r * 0.55, -r * 0.18, r * 0.3, r * 0.1);
+    ctx.restore();
+
+    ctx.strokeStyle = tint(def.color, 'key', 0.35, 0.75);   // the aerial
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(-r * 0.1, -r * 0.72);
+    ctx.lineTo(-r * 0.34, -r * 1.12);
     ctx.stroke();
 
-    ctx.strokeStyle = rgba('#000000', 0.35);
-    ctx.lineWidth = 0.7;
-    for (let i = 0; i < 6; i++) {
-      const a = (i / 6) * Math.PI * 2;
-      ctx.beginPath();
-      ctx.moveTo(Math.cos(a) * r * 0.35, Math.sin(a) * r * 0.35);
-      ctx.lineTo(Math.cos(a) * r * 0.95, Math.sin(a) * r * 0.95);
-      ctx.stroke();
-    }
-
-    polygonPath(ctx, 0, 0, r * 0.42, 6, Math.PI / 6);
-    ctx.fillStyle = 'rgba(4,8,14,0.8)';
-    ctx.fill();
+    // the eye: sunk in a dark housing, forward of centre
     ctx.beginPath();
-    ctx.arc(r * 0.5, 0, r * 0.18, 0, Math.PI * 2);
-    ctx.fillStyle = shade(def.color, 130);
+    ctx.arc(r * 0.42, r * 0.02, r * 0.22, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(3,6,11,0.85)';
     ctx.fill();
+    emissive(ctx, r * 0.42, r * 0.02, r * 0.11, hot, { bloom: 1.9 });
   });
 }
 
-// The counter-rotating ring: notches for most, a broken halo for the boss.
+// The counter-rotating ring. Segment lengths are uneven and seeded: a ring of
+// four identical arcs is the single most machine-drawn thing on the field.
 export function bakeRing(key, def) {
   const outer = def.radius * (key === 'boss' ? 1.5 : 1.3);
   return bake(outer, (ctx, r) => {
-    const segments = key === 'boss' ? 6 : key === 'swift' ? 3 : 4;
-    ctx.strokeStyle = rgba(def.color, key === 'boss' ? 0.85 : 0.6);
-    ctx.lineWidth = key === 'boss' ? 2.2 : 1.4;
+    const random = (() => { let s = seedOf('ring:' + key); return () => (s = Math.imul(s ^ (s >>> 15), 1 | s), ((s ^ (s >>> 14)) >>> 0) / 4294967296); })();
+    const segments = key === 'boss' ? 5 : key === 'swift' ? 3 : 4;
     ctx.lineCap = 'butt';
-    const arc = (Math.PI * 2) / segments;
+    let a = 0;
     for (let i = 0; i < segments; i++) {
+      const span = ((Math.PI * 2) / segments) * (0.28 + random() * 0.42);
+      const radius = r * (0.78 + random() * 0.1);
+      ctx.strokeStyle = rim(ctx, r, def.color, key === 'boss' ? 0.95 : 0.7);
+      ctx.lineWidth = (key === 'boss' ? 1.7 : 1.1) + random() * 0.9;
       ctx.beginPath();
-      ctx.arc(0, 0, r * 0.82, i * arc, i * arc + arc * 0.5);
+      ctx.arc(0, 0, radius, a, a + span);
       ctx.stroke();
+      a += (Math.PI * 2) / segments;
     }
-    if (key === 'boss') {
-      ctx.strokeStyle = rgba(def.color, 0.35);
-      ctx.lineWidth = 1;
-      for (let i = 0; i < segments; i++) {
-        const a = i * arc + arc * 0.25;
-        ctx.beginPath();
-        ctx.moveTo(Math.cos(a) * r * 0.62, Math.sin(a) * r * 0.62);
-        ctx.lineTo(Math.cos(a) * r * 0.95, Math.sin(a) * r * 0.95);
-        ctx.stroke();
-      }
-    }
+    // one spar, on one side, tying the ring back to the hull
+    ctx.strokeStyle = fade(def.color, 0.3);
+    ctx.lineWidth = 0.7;
+    ctx.beginPath();
+    ctx.moveTo(-r * 0.3, -r * 0.5);
+    ctx.lineTo(-r * 0.62, -r * 0.6);
+    ctx.stroke();
   });
 }
 
 // ------------------------------------------------------------- tower art ---
-export function bakeTowerBase(def) {
+// Each tower type gets its own footprint, not one shared octagon with a
+// different gun on it. Silhouette is what you read at a glance on a phone;
+// two towers that differ only in their head are two of the same tower.
+export function bakeTowerBase(key, def) {
   return bake(TOWER_R, (ctx, r) => {
-    ctx.beginPath();
-    ctx.ellipse(0, r * 0.35, r * 0.95, r * 0.5, 0, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(0,0,0,0.35)';
-    ctx.fill();
+    const seed = seedOf('base:' + key);
+    contact(ctx, r, { spread: 1.25, opacity: 0.5 });
+    // Painted in the tower's hue, but heavily knocked back toward steel: the
+    // base has to say which tower this is from across the room without
+    // competing with the head, which is the part that moves and aims.
+    const pad = material(ctx, r, blend(def.color, '#3a4761', 0.85), { key: 0.5, shadow: 0.58 });
 
-    const plate = ctx.createLinearGradient(0, -r, 0, r);
-    plate.addColorStop(0, shade(def.color, -55));
-    plate.addColorStop(0.5, shade(def.color, -95));
-    plate.addColorStop(1, shade(def.color, -130));
-    polygonPath(ctx, 0, 0, r, 8, Math.PI / 8);
-    ctx.fillStyle = plate;
-    ctx.fill();
-    ctx.lineWidth = 1.3;
-    ctx.strokeStyle = shade(def.color, 45);
-    ctx.stroke();
-
-    polygonPath(ctx, 0, 0, r * 0.72, 8, Math.PI / 8);
-    ctx.strokeStyle = rgba('#000000', 0.4);
-    ctx.lineWidth = 0.8;
-    ctx.stroke();
-
-    ctx.fillStyle = rgba('#ffffff', 0.25);
-    for (let i = 0; i < 4; i++) {
-      const a = Math.PI / 4 + (i / 4) * Math.PI * 2;
+    if (key === 'laser') {
+      // a five-sided pad with heat fins down one flank
+      const plate = () => shapePath(ctx, 0, 0, r * 0.98, 5, -Math.PI / 2 + 0.35, { jitter: 0.05, seed });
+      surface(ctx, plate, r, { fill: pad, edge: def.color, seed, specks: 60, edgeWidth: 1.2, edgeStrength: 0.45 });
+      ctx.strokeStyle = fade(def.color, 0.32);
+      ctx.lineWidth = 1.1;
+      for (let i = 0; i < 3; i++) {          // fins, one side
+        ctx.beginPath();
+        ctx.moveTo(-r * 0.72 + i * r * 0.2, r * 0.32);
+        ctx.lineTo(-r * 0.56 + i * r * 0.2, r * 0.72);
+        ctx.stroke();
+      }
+    } else if (key === 'mortar') {
+      // a sunken pit inside a blast collar, thicker where the light lands
+      const collar = () => shapePath(ctx, 0, 0, r, 14, 0, { jitter: 0.05, seed });
+      surface(ctx, collar, r, { fill: pad, edge: def.color, seed, specks: 90, wear: 3, edgeWidth: 1.2, edgeStrength: 0.75 });
       ctx.beginPath();
-      ctx.arc(Math.cos(a) * r * 0.8, Math.sin(a) * r * 0.8, 0.9, 0, Math.PI * 2);
+      ctx.arc(r * 0.05, r * 0.05, r * 0.66, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(4,8,14,0.72)';
       ctx.fill();
+      ctx.strokeStyle = fade('#000000', 0.5);
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,244,226,0.22)';   // the lit lip of the pit
+      ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      ctx.arc(r * 0.05, r * 0.05, r * 0.66, Math.PI * 0.95, Math.PI * 1.85);
+      ctx.stroke();
+    } else {
+      // a bolted square plate with the corners cut off
+      const plate = () => shapePath(ctx, 0, 0, r, 8, Math.PI / 8, { jitter: 0.03, seed, squash: 0.97 });
+      surface(ctx, plate, r, { fill: pad, edge: def.color, seed, specks: 80, wear: 2, edgeWidth: 1.2, edgeStrength: 0.75 });
+      ctx.fillStyle = 'rgba(255,246,228,0.3)';
+      for (const [bx, by] of [[-0.7, -0.62], [0.72, -0.6], [-0.72, 0.66]]) {
+        ctx.beginPath();
+        ctx.arc(bx * r, by * r, 1, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
 
+    // The tower's colour, painted on: a marking reads as a machine that was
+    // labelled, where a pad flooded with the hue reads as a UI chip. This and
+    // the head's lights are the only places the hue appears.
+    ctx.strokeStyle = fade(def.color, 0.55);
+    ctx.lineWidth = 1.6;
     ctx.beginPath();
-    ctx.arc(0, 0, r * 0.4, 0, Math.PI * 2);
-    ctx.fillStyle = '#0b1220';
+    ctx.arc(0, 0, r * 0.62, -2.5, -1.4);
+    ctx.stroke();
+    ctx.fillStyle = fade(def.color, 0.32);
+    ctx.beginPath();
+    ctx.moveTo(-r * 0.86, r * 0.1);
+    ctx.lineTo(-r * 0.52, r * 0.1);
+    ctx.lineTo(-r * 0.62, r * 0.36);
+    ctx.lineTo(-r * 0.92, r * 0.36);
+    ctx.closePath();
     ctx.fill();
-    ctx.strokeStyle = shade(def.color, 10);
-    ctx.lineWidth = 0.9;
+
+    // Every base runs a cable off toward the depot side, so a tower looks
+    // plugged into something rather than dropped on the floor.
+    ctx.strokeStyle = 'rgba(4,8,14,0.6)';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(r * 0.3, r * 0.55);
+    ctx.quadraticCurveTo(r * 0.8, r * 0.8, r * 1.02, r * 0.62);
+    ctx.stroke();
+    ctx.strokeStyle = fade(def.color, 0.3);
+    ctx.lineWidth = 0.6;
+    ctx.stroke();
+
+    // the turntable the head sits on
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 0.38, 0, Math.PI * 2);
+    ctx.fillStyle = material(ctx, r * 0.4, '#0d1420', { key: 0.3, shadow: 0.5 });
+    ctx.fill();
+    ctx.strokeStyle = rim(ctx, r * 0.4, def.color, 0.7);
+    ctx.lineWidth = 0.8;
     ctx.stroke();
   });
 }
@@ -278,341 +411,102 @@ export function bakeTowerBase(def) {
 // Heads point along +x and are rotated toward the target at draw time.
 export function bakeTowerHead(key, def) {
   return bake(TOWER_R + 5, (ctx, r) => {
+    const seed = seedOf('head:' + key);
     // Steel, not the tower's colour: a head in the same hue as its base makes
     // the whole tower read as one lump at phone size.
-    const metal = ctx.createLinearGradient(0, -r * 0.5, 0, r * 0.5);
-    metal.addColorStop(0, '#93a4c2');
-    metal.addColorStop(0.45, PALETTE.steel);
-    metal.addColorStop(1, PALETTE.steelDark);
-    const rim = shade(def.color, 60);
+    const metal = material(ctx, r * 0.55, '#6c7da2', { key: 0.5, shadow: 0.58 });
 
     if (key === 'laser') {
-      ctx.fillStyle = metal;
-      ctx.beginPath();
-      ctx.moveTo(-r * 0.35, -r * 0.3);
-      ctx.lineTo(r * 0.45, -r * 0.16);
-      ctx.lineTo(r * 0.45, r * 0.16);
-      ctx.lineTo(-r * 0.35, r * 0.3);
-      ctx.closePath();
-      ctx.fill();
-      ctx.strokeStyle = rim;
-      ctx.lineWidth = 0.8;
-      ctx.stroke();
-      // emitter prongs and a lens
-      ctx.strokeStyle = rim;
-      ctx.lineWidth = 1.6;
-      for (const sign of [-1, 1]) {
+      // an emitter block, a heat sink on top, and prongs around the lens
+      const body = () => {
         ctx.beginPath();
-        ctx.moveTo(r * 0.4, sign * r * 0.22);
-        ctx.lineTo(r * 0.78, sign * r * 0.12);
+        ctx.moveTo(-r * 0.38, -r * 0.3);
+        ctx.lineTo(r * 0.44, -r * 0.19);
+        ctx.lineTo(r * 0.46, r * 0.17);
+        ctx.lineTo(-r * 0.34, r * 0.32);
+        ctx.closePath();
+      };
+      surface(ctx, body, r * 0.5, { fill: metal, edge: def.color, seed, specks: 40, edgeWidth: 0.7 });
+
+      ctx.fillStyle = 'rgba(4,8,14,0.55)';       // heat sink fins, top face only
+      for (let i = 0; i < 4; i++) ctx.fillRect(-r * 0.28 + i * r * 0.16, -r * 0.28, r * 0.05, r * 0.2);
+
+      ctx.strokeStyle = rim(ctx, r * 0.4, def.color, 0.9);
+      ctx.lineWidth = 1.5;
+      for (const sign of [-1, 1]) {              // prongs, the lower one shorter
+        ctx.beginPath();
+        ctx.moveTo(r * 0.4, sign * r * 0.24);
+        ctx.lineTo(r * (sign < 0 ? 0.98 : 0.82), sign * r * 0.09);
         ctx.stroke();
       }
-      ctx.beginPath();
-      ctx.arc(r * 0.42, 0, r * 0.16, 0, Math.PI * 2);
-      ctx.fillStyle = shade(def.color, 110);
-      ctx.fill();
+      emissive(ctx, r * 0.62, 0, r * 0.1, def.color, { bloom: 2 });
       return;
     }
 
     if (key === 'mortar') {
-      // drum magazine plus a short fat tube with a muzzle brake
+      // a drum magazine offset to one side, and a long tube over it
       ctx.beginPath();
-      ctx.arc(-r * 0.2, 0, r * 0.42, 0, Math.PI * 2);
+      ctx.arc(-r * 0.3, r * 0.06, r * 0.34, 0, Math.PI * 2);
       ctx.fillStyle = metal;
       ctx.fill();
-      ctx.strokeStyle = rim;
+      ctx.strokeStyle = rim(ctx, r * 0.4, def.color, 0.85);
       ctx.lineWidth = 0.9;
       ctx.stroke();
-      ctx.fillStyle = PALETTE.steelDark;
-      ctx.fillRect(-r * 0.1, -r * 0.26, r * 0.75, r * 0.52);
-      ctx.strokeRect(-r * 0.1, -r * 0.26, r * 0.75, r * 0.52);
-      ctx.fillStyle = shade(def.color, -10);
-      ctx.fillRect(r * 0.5, -r * 0.34, r * 0.2, r * 0.68);
-      ctx.strokeRect(r * 0.5, -r * 0.34, r * 0.2, r * 0.68);
+      ctx.save();
       ctx.beginPath();
-      ctx.arc(r * 0.6, 0, r * 0.14, 0, Math.PI * 2);
-      ctx.fillStyle = '#120a05';
-      ctx.fill();
-      return;
-    }
+      ctx.arc(-r * 0.3, r * 0.06, r * 0.34, 0, Math.PI * 2);
+      ctx.clip();
+      grain(ctx, r * 0.5, seed, { count: 30 });
+      ctx.restore();
 
-    // turret: breech block and twin barrels with vents
-    ctx.fillStyle = metal;
-    ctx.beginPath();
-    ctx.roundRect
-      ? ctx.roundRect(-r * 0.4, -r * 0.34, r * 0.7, r * 0.68, 2)
-      : ctx.rect(-r * 0.4, -r * 0.34, r * 0.7, r * 0.68);
-    ctx.fill();
-    ctx.strokeStyle = rim;
-    ctx.lineWidth = 0.9;
-    ctx.stroke();
-
-    for (const sign of [-1, 1]) {
-      ctx.fillStyle = PALETTE.steel;
-      ctx.fillRect(r * 0.2, sign * r * 0.1 - r * 0.09, r * 0.62, r * 0.18);
-      ctx.strokeRect(r * 0.2, sign * r * 0.1 - r * 0.09, r * 0.62, r * 0.18);
-    }
-    ctx.strokeStyle = rgba('#000000', 0.45);
-    ctx.lineWidth = 0.6;
-    for (let i = 0; i < 3; i++) {
-      ctx.beginPath();
-      ctx.moveTo(-r * 0.28 + i * 3, -r * 0.3);
-      ctx.lineTo(-r * 0.28 + i * 3, r * 0.3);
-      ctx.stroke();
-    }
-  });
-}
-
-// ---------------------------------------------------------- building art ---
-// Buildings are industrial blocks: a footprint slab, a structure on top, and
-// the one feature that says what it does — a headframe, a chimney, a cooling
-// stack. They must never be mistaken for a tower at a glance, so nothing here
-// is an octagon and nothing has a barrel.
-export const BUILDING_R = BALANCE.economy.buildingRadius;
-
-// Buildings are built out of near-neutral dark steel, exactly like the tower
-// bases, and carry their colour only in edges and lit windows. A slab filled
-// with the tint reads as a UI chip dropped on the map, not as a structure —
-// and it drowns out the towers and the wave, which are what you watch.
-const STEEL_TOP = '#26314a';
-const STEEL_MID = '#151f31';
-const STEEL_LOW = '#0b1220';
-
-// The concrete pad every building sits on.
-function slab(ctx, r, def) {
-  ctx.beginPath();
-  ctx.ellipse(0, r * 0.5, r * 0.98, r * 0.42, 0, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(0,0,0,0.45)';
-  ctx.fill();
-
-  const s = r * 0.9;
-  const pad = ctx.createLinearGradient(0, -s, 0, s);
-  pad.addColorStop(0, '#141d2d');
-  pad.addColorStop(1, '#0a111c');
-  ctx.beginPath();
-  if (ctx.roundRect) ctx.roundRect(-s, -s, s * 2, s * 2, 3);
-  else ctx.rect(-s, -s, s * 2, s * 2);
-  ctx.fillStyle = pad;
-  ctx.fill();
-  ctx.lineWidth = 1.2;
-  ctx.strokeStyle = rgba(def.color, 0.55);
-  ctx.stroke();
-
-  // corner anchors
-  ctx.fillStyle = rgba('#ffffff', 0.14);
-  for (const sx of [-1, 1]) {
-    for (const sy of [-1, 1]) {
-      ctx.beginPath();
-      ctx.arc(sx * s * 0.82, sy * s * 0.82, 1.1, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
-}
-
-// A boxy structure, used as the body of most buildings.
-function block(ctx, x, y, w, h, def, lit = true) {
-  const grad = ctx.createLinearGradient(x, y - h, x, y + h);
-  grad.addColorStop(0, STEEL_TOP);
-  grad.addColorStop(0.55, STEEL_MID);
-  grad.addColorStop(1, STEEL_LOW);
-  ctx.beginPath();
-  if (ctx.roundRect) ctx.roundRect(x - w, y - h, w * 2, h * 2, 1.5);
-  else ctx.rect(x - w, y - h, w * 2, h * 2);
-  ctx.fillStyle = grad;
-  ctx.fill();
-  ctx.lineWidth = 0.8;
-  ctx.strokeStyle = rgba(def.color, 0.7);
-  ctx.stroke();
-  if (lit) {
-    ctx.fillStyle = rgba('#ffffff', 0.06);
-    ctx.fillRect(x - w, y - h, w * 2, h * 0.45);
-  }
-}
-
-function windows(ctx, x, y, w, h, cols, rows, tint) {
-  const cw = (w * 2) / (cols * 2 - 1);
-  const ch = (h * 2) / (rows * 2 - 1);
-  ctx.fillStyle = tint;
-  for (let i = 0; i < cols; i++) {
-    for (let j = 0; j < rows; j++) {
-      ctx.fillRect(x - w + i * cw * 2, y - h + j * ch * 2, cw, ch);
-    }
-  }
-}
-
-export function bakeBuilding(key, def) {
-  return bake(BUILDING_R + 3, (ctx, r) => {
-    slab(ctx, r, def);
-    const glow = shade(def.color, 60);
-
-    if (key === 'miner') {
-      // a headframe over a shaft, with a spoil heap beside it
-      ctx.fillStyle = 'rgba(6,10,18,0.75)';
-      ctx.beginPath();
-      ctx.ellipse(-r * 0.15, r * 0.25, r * 0.4, r * 0.22, 0, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.strokeStyle = '#5b6c88';
-      ctx.lineWidth = 2;
-      ctx.lineJoin = 'round';
-      ctx.beginPath();                       // the A-frame legs
-      ctx.moveTo(-r * 0.5, r * 0.4);
-      ctx.lineTo(-r * 0.12, -r * 0.62);
-      ctx.lineTo(r * 0.22, r * 0.4);
-      ctx.stroke();
-      ctx.beginPath();                       // cross brace
-      ctx.moveTo(-r * 0.36, -r * 0.05);
-      ctx.lineTo(0.06 * r, -r * 0.05);
-      ctx.stroke();
-      ctx.beginPath();                       // the winding rope
-      ctx.moveTo(-r * 0.12, -r * 0.62);
-      ctx.lineTo(r * 0.5, -r * 0.2);
-      ctx.stroke();
-      ctx.beginPath();                       // the wheel
-      ctx.arc(-r * 0.12, -r * 0.62, r * 0.17, 0, Math.PI * 2);
-      ctx.fillStyle = glow;
-      ctx.fill();
-      // spoil heap
-      ctx.beginPath();
-      ctx.moveTo(r * 0.24, r * 0.5);
-      ctx.lineTo(r * 0.58, -r * 0.05);
-      ctx.lineTo(r * 0.86, r * 0.5);
-      ctx.closePath();
-      ctx.fillStyle = STEEL_MID;
-      ctx.fill();
-      ctx.strokeStyle = rgba(def.color, 0.6);
-      ctx.lineWidth = 0.8;
-      ctx.stroke();
-      return;
-    }
-
-    if (key === 'plant') {
-      // two cooling stacks and a turbine hall
-      block(ctx, 0, r * 0.34, r * 0.78, r * 0.3, def);
-      for (const sx of [-1, 1]) {
+      const tube = () => {
         ctx.beginPath();
-        ctx.moveTo(sx * r * 0.44 - r * 0.2, -r * 0.05);
-        ctx.lineTo(sx * r * 0.44 - r * 0.13, -r * 0.66);
-        ctx.lineTo(sx * r * 0.44 + r * 0.13, -r * 0.66);
-        ctx.lineTo(sx * r * 0.44 + r * 0.2, -r * 0.05);
-        ctx.closePath();
-        const stack = ctx.createLinearGradient(0, -r * 0.66, 0, 0);
-        stack.addColorStop(0, STEEL_TOP);
-        stack.addColorStop(1, STEEL_LOW);
-        ctx.fillStyle = stack;
-        ctx.fill();
-        ctx.strokeStyle = rgba(def.color, 0.7);
-        ctx.lineWidth = 0.8;
-        ctx.stroke();
-        ctx.fillStyle = rgba(def.color, 0.85);
-        ctx.fillRect(sx * r * 0.44 - r * 0.13, -r * 0.66, r * 0.26, r * 0.08);
-      }
-      windows(ctx, 0, r * 0.34, r * 0.6, r * 0.16, 4, 2, glow);
+        if (ctx.roundRect) ctx.roundRect(-r * 0.3, -r * 0.19, r * 1.1, r * 0.38, 1.5);
+        else ctx.rect(-r * 0.3, -r * 0.19, r * 1.1, r * 0.38);
+      };
+      surface(ctx, tube, r * 0.4, { fill: metal, edge: def.color, seed: seed ^ 3, specks: 26, edgeWidth: 0.8 });
+
+      ctx.fillStyle = material(ctx, r * 0.3, '#3a4560', { key: 0.6, shadow: 0.6 });
+      ctx.fillRect(r * 0.66, -r * 0.3, r * 0.17, r * 0.6);   // muzzle brake
+      ctx.strokeStyle = rim(ctx, r * 0.3, def.color, 0.8);
+      ctx.lineWidth = 0.7;
+      ctx.strokeRect(r * 0.66, -r * 0.3, r * 0.17, r * 0.6);
+      ctx.beginPath();
+      ctx.arc(r * 0.75, 0, r * 0.11, 0, Math.PI * 2);
+      ctx.fillStyle = '#0d0704';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,246,228,0.16)';   // a lit rib along the top
+      ctx.lineWidth = 0.7;
+      ctx.beginPath();
+      ctx.moveTo(-r * 0.24, -r * 0.13);
+      ctx.lineTo(r * 0.6, -r * 0.13);
+      ctx.stroke();
       return;
     }
 
-    if (key === 'ammofab' || key === 'shellfab') {
-      // a hall with a sawtooth roof and a chimney; the fab is taller and
-      // gets a second stack, so the two read apart at a glance
-      const heavy = key === 'shellfab';
-      block(ctx, 0, r * 0.3, r * 0.82, r * 0.36, def);
-      windows(ctx, 0, r * 0.34, r * 0.62, r * 0.18, heavy ? 3 : 4, 2, glow);
-
-      ctx.beginPath();                        // sawtooth roof
-      ctx.moveTo(-r * 0.82, -r * 0.06);
-      for (let i = 0; i < 3; i++) {
-        const x0 = -r * 0.82 + (i * r * 1.64) / 3;
-        ctx.lineTo(x0 + r * 0.2, -r * 0.44);
-        ctx.lineTo(x0 + (r * 1.64) / 3, -r * 0.06);
-      }
-      ctx.closePath();
-      ctx.fillStyle = STEEL_LOW;
-      ctx.fill();
-      ctx.strokeStyle = rgba(def.color, 0.65);
-      ctx.lineWidth = 0.8;
-      ctx.stroke();
-
-      const stacks = heavy ? [-0.5, 0.5] : [0.55];
-      for (const sx of stacks) {
-        ctx.fillStyle = STEEL_MID;
-        ctx.fillRect(sx * r - r * 0.1, -r * 0.86, r * 0.2, r * 0.5);
-        ctx.strokeRect(sx * r - r * 0.1, -r * 0.86, r * 0.2, r * 0.5);
-        ctx.fillStyle = rgba(def.color, 0.8);
-        ctx.fillRect(sx * r - r * 0.1, -r * 0.86, r * 0.2, r * 0.07);
-      }
-      return;
-    }
-
-    // depot: a shed with a roller door and stacked crates on the apron
-    block(ctx, -r * 0.18, r * 0.18, r * 0.62, r * 0.48, def);
-    ctx.beginPath();                          // pitched roof
-    ctx.moveTo(-r * 0.86, -r * 0.3);
-    ctx.lineTo(-r * 0.18, -r * 0.72);
-    ctx.lineTo(r * 0.5, -r * 0.3);
-    ctx.closePath();
-    ctx.fillStyle = STEEL_LOW;
-    ctx.fill();
-    ctx.strokeStyle = rgba(def.color, 0.65);
-    ctx.lineWidth = 0.9;
-    ctx.stroke();
-
-    ctx.fillStyle = 'rgba(6,10,18,0.7)';      // roller door
-    ctx.fillRect(-r * 0.44, -r * 0.06, r * 0.5, r * 0.6);
-    ctx.strokeStyle = glow;
-    ctx.lineWidth = 0.7;
-    for (let i = 1; i < 4; i++) {
+    // turret: a breech block with twin barrels and a sight on one side
+    const breech = () => {
       ctx.beginPath();
-      ctx.moveTo(-r * 0.44, -r * 0.06 + i * r * 0.15);
-      ctx.lineTo(r * 0.06, -r * 0.06 + i * r * 0.15);
-      ctx.stroke();
-    }
-    for (const [cx, cy, cs] of [[0.6, 0.42, 0.2], [0.6, 0.02, 0.18], [0.24, 0.52, 0.16]]) {
-      ctx.fillStyle = STEEL_MID;
-      ctx.fillRect(cx * r - cs * r, cy * r - cs * r, cs * r * 2, cs * r * 2);
-      ctx.strokeStyle = rgba(def.color, 0.6);
-      ctx.lineWidth = 0.7;
-      ctx.strokeRect(cx * r - cs * r, cy * r - cs * r, cs * r * 2, cs * r * 2);
-    }
-  });
-}
+      if (ctx.roundRect) ctx.roundRect(-r * 0.42, -r * 0.33, r * 0.72, r * 0.66, 2);
+      else ctx.rect(-r * 0.42, -r * 0.33, r * 0.72, r * 0.66);
+    };
+    surface(ctx, breech, r * 0.5, { fill: metal, edge: def.color, seed, specks: 40, edgeWidth: 0.9 });
 
-// An ore node: a seam of crystals broken out of the ground.
-export function bakeOreNode() {
-  return bake(20, (ctx, r) => {
-    ctx.beginPath();
-    ctx.ellipse(0, r * 0.22, r * 0.94, r * 0.5, 0, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(0,0,0,0.4)';
-    ctx.fill();
-    ctx.beginPath();
-    ctx.ellipse(0, r * 0.2, r * 0.86, r * 0.44, 0, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(35,30,26,0.75)';
-    ctx.fill();
-
-    const shards = [[0.02, -0.3, 0.52], [-0.52, 0.06, 0.36], [0.5, 0.02, 0.4], [-0.2, 0.3, 0.26], [0.26, 0.34, 0.22]];
-    for (const [dx, dy, size] of shards) {
-      const x = dx * r, y = dy * r, h = size * r;
-      ctx.beginPath();
-      ctx.moveTo(x, y - h);
-      ctx.lineTo(x + h * 0.58, y + h * 0.28);
-      ctx.lineTo(x, y + h * 0.6);
-      ctx.lineTo(x - h * 0.58, y + h * 0.28);
-      ctx.closePath();
-      const grad = ctx.createLinearGradient(x, y - h, x, y + h);
-      grad.addColorStop(0, '#e7e5e4');
-      grad.addColorStop(0.5, '#a8a29e');
-      grad.addColorStop(1, '#4a4441');
-      ctx.fillStyle = grad;
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(245,245,244,0.65)';
-      ctx.lineWidth = 0.7;
-      ctx.stroke();
-      ctx.beginPath();                        // a highlight facet
-      ctx.moveTo(x, y - h);
-      ctx.lineTo(x - h * 0.58, y + h * 0.28);
-      ctx.lineTo(x, y + h * 0.6);
-      ctx.closePath();
-      ctx.fillStyle = 'rgba(255,255,255,0.16)';
-      ctx.fill();
+    for (const [sign, len] of [[-1, 0.78], [1, 0.66]]) {   // barrels of unequal reach
+      const y = sign * r * 0.11 - r * 0.09;
+      ctx.fillStyle = material(ctx, r * 0.2, '#4c5a78', { key: 0.55, shadow: 0.6, spread: 2 });
+      ctx.fillRect(r * 0.2, y, r * len, r * 0.18);
+      ctx.strokeStyle = rim(ctx, r * 0.2, def.color, 0.7);
+      ctx.lineWidth = 0.6;
+      ctx.strokeRect(r * 0.2, y, r * len, r * 0.18);
+      ctx.fillStyle = '#070b12';
+      ctx.fillRect(r * (0.2 + len) - 1, y + 0.4, 1.2, r * 0.18 - 0.8);
     }
+
+    ctx.fillStyle = 'rgba(4,7,13,0.5)';        // cooling vents, one side only
+    for (let i = 0; i < 3; i++) ctx.fillRect(-r * 0.3 + i * r * 0.14, -r * 0.3, r * 0.05, r * 0.22);
+    ctx.fillStyle = material(ctx, r * 0.2, '#5b6a8c', { key: 0.6, shadow: 0.5 });
+    ctx.fillRect(-r * 0.18, -r * 0.46, r * 0.26, r * 0.15);   // the sight, off centre
+    emissive(ctx, -r * 0.05, -r * 0.39, r * 0.06, def.color, { bloom: 2.2 });
   });
 }

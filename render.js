@@ -7,8 +7,11 @@ import { BALANCE } from './balance.js';
 import { LEVEL } from './game.js';
 import {
   PALETTE, TOWER_R, BUILDING_R, blit, polygonPath, rgba, shade,
-  bakeHull, bakeRing, bakeTowerBase, bakeTowerHead, bakeBuilding, bakeOreNode,
+  bakeHull, bakeRing, bakeTowerBase, bakeTowerHead,
 } from './sprites.js';
+import { bakeBuilding, bakeOreNode } from './structures.js';
+import { createGround } from './ground.js';
+import { mix, hexOf, rgbOf } from './paint.js';
 
 export function createRenderer(canvas) {
   const ctx = canvas.getContext('2d');
@@ -23,7 +26,7 @@ export function createRenderer(canvas) {
   const towerBases = {};
   const towerHeads = {};
   for (const [key, def] of Object.entries(BALANCE.towers)) {
-    towerBases[key] = bakeTowerBase(def);
+    towerBases[key] = bakeTowerBase(key, def);
     towerHeads[key] = bakeTowerHead(key, def);
   }
   const buildingArt = {};
@@ -31,6 +34,13 @@ export function createRenderer(canvas) {
     buildingArt[key] = bakeBuilding(key, def);
   }
   const oreArt = bakeOreNode();
+  const ground = createGround(ctx);
+  // The near-white a beam's core burns to, one per tower type rather than
+  // remixed every frame for every laser on the map.
+  const beamCore = {};
+  for (const [key, def] of Object.entries(BALANCE.towers)) {
+    beamCore[key] = hexOf(mix(rgbOf(def.color), [255, 255, 255], 0.65));
+  }
 
   // ------------------------------------------------------------- camera ---
   // The arena is bigger than the screen, so the view is a window onto it:
@@ -112,23 +122,15 @@ export function createRenderer(canvas) {
   }
 
   // Drawn across the whole visible area so letterboxing never shows as bars.
-  function drawBackground(view) {
-    ctx.fillStyle = PALETTE.bg;
-    ctx.fillRect(view.x0, view.y0, view.x1 - view.x0, view.y1 - view.y0);
-    const grid = (spacing, color) => {
-      ctx.strokeStyle = color;
-      ctx.beginPath();
-      for (let x = Math.ceil(view.x0 / spacing) * spacing; x <= view.x1; x += spacing) {
-        ctx.moveTo(x, view.y0); ctx.lineTo(x, view.y1);
-      }
-      for (let y = Math.ceil(view.y0 / spacing) * spacing; y <= view.y1; y += spacing) {
-        ctx.moveTo(view.x0, y); ctx.lineTo(view.x1, y);
-      }
-      ctx.stroke();
+  // The floor itself is one baked tile (ground.js); the lighting on top of it
+  // is not tiled, because it has to stay put relative to the vault.
+  function drawBackground(time) {
+    const frame = {
+      camera, scale, dpr, cssW, cssH,
+      canvasW: canvas.width, canvasH: canvas.height,
     };
-    ctx.lineWidth = 0.5;
-    grid(20, PALETTE.grid);
-    grid(100, PALETTE.gridBright);
+    ground.paint(frame);
+    ground.light(frame, time, { x: LEVEL.vault[0], y: LEVEL.vault[1] });
   }
 
   function tracePath() {
@@ -380,6 +382,78 @@ export function createRenderer(canvas) {
     }
   }
 
+  // A laser is a held beam, not a burst of tiny bullets. The tower carries the
+  // beam's state (game.js) and it is drawn as light: additive layers, widest
+  // and faintest on the outside, a near-white core in the middle. Additive is
+  // the whole trick — paint the same line with normal blending and it reads as
+  // a drawn stripe rather than something glowing.
+  function drawBeams(game) {
+    const t = game.state.time;
+    for (const tower of game.state.towers) {
+      if (!(tower.beamHold > 0)) continue;
+      const def = BALANCE.towers[tower.type];
+      const cos = Math.cos(tower.angle), sin = Math.sin(tower.angle);
+      const x1 = tower.x + cos * (TOWER_R + 3);
+      const y1 = tower.y + sin * (TOWER_R + 3);
+      const x2 = tower.beamX, y2 = tower.beamY;
+      // Each damage tick flares and falls back; between ticks the beam is
+      // steady but never perfectly still.
+      const pulse = tower.beamPulse || 0;
+      const flicker = 0.88 + Math.sin(t * 43 + tower.id * 1.7) * 0.07
+        + Math.sin(t * 97 + tower.id) * 0.05;
+      const w = BALANCE.fx.beamWidth * flicker * (1 + pulse * 0.55);
+      const hot = beamCore[tower.type];
+
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.lineCap = 'round';
+      const stroke = (width, style) => {
+        ctx.strokeStyle = style;
+        ctx.lineWidth = width;
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+      };
+      stroke(w * 6.5, rgba(def.color, 0.1));
+      stroke(w * 3, rgba(def.color, 0.22));
+      stroke(w * 1.5, rgba(def.color, 0.5));
+      stroke(w, rgba(hot, 0.9));
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = w * 0.45;
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+
+      // Charge running up the beam. A dashed overlay sliding toward the target
+      // is what sells it as a flow of energy rather than a static rod.
+      ctx.setLineDash([3, 9]);
+      ctx.lineDashOffset = -(t * 90) % 12;
+      ctx.strokeStyle = rgba(def.color, 0.5);
+      ctx.lineWidth = w * 1.8;
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      const bloom = (x, y, radius, alpha) => {
+        const g = ctx.createRadialGradient(x, y, 0, x, y, radius);
+        g.addColorStop(0, `rgba(255,255,255,${alpha})`);
+        g.addColorStop(0.3, rgba(def.color, alpha * 0.8));
+        g.addColorStop(1, rgba(def.color, 0));
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(x, y, radius, 0, Math.PI * 2);
+        ctx.fill();
+      };
+      bloom(x1, y1, 4 + pulse * 3, 0.5 + pulse * 0.3);           // emitter
+      bloom(x2, y2, 5.5 + pulse * 4.5, 0.55 + pulse * 0.35);     // impact
+      ctx.restore();
+    }
+  }
+
   function drawProjectiles(game) {
     for (const p of game.state.projectiles) {
       const dx = p.tx - p.x, dy = p.ty - p.y;
@@ -412,21 +486,7 @@ export function createRenderer(canvas) {
   function drawFx(game) {
     for (const f of game.state.fx) {
       const t = Math.max(0, f.life / f.max);
-      if (f.kind === 'beam') {
-        ctx.save();
-        ctx.lineCap = 'round';
-        ctx.globalAlpha = t;
-        ctx.strokeStyle = rgba(f.color, 0.35);
-        ctx.lineWidth = 5;
-        ctx.beginPath();
-        ctx.moveTo(f.x1, f.y1);
-        ctx.lineTo(f.x2, f.y2);
-        ctx.stroke();
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 1.4;
-        ctx.stroke();
-        ctx.restore();
-      } else if (f.kind === 'ring') {
+      if (f.kind === 'ring') {
         ctx.save();
         ctx.globalAlpha = t * 0.9;
         ctx.strokeStyle = f.color;
@@ -592,6 +652,21 @@ export function createRenderer(canvas) {
     ctx.setLineDash([10, 8]);
     ctx.strokeRect(x0, y0, WORLD.width, WORLD.height);
     ctx.setLineDash([]);
+
+    // Corner brackets. A dashed rectangle alone reads as a placeholder; the
+    // brackets make the edge look like it was surveyed and marked.
+    ctx.strokeStyle = rgba('#3d5a86', 0.9);
+    ctx.lineWidth = 2.5;
+    const arm = 26;
+    for (const [cx, cy, sx, sy] of [
+      [x0, y0, 1, 1], [x1, y0, -1, 1], [x0, y1, 1, -1], [x1, y1, -1, -1],
+    ]) {
+      ctx.beginPath();
+      ctx.moveTo(cx + sx * arm, cy);
+      ctx.lineTo(cx, cy);
+      ctx.lineTo(cx, cy + sy * arm);
+      ctx.stroke();
+    }
     ctx.restore();
   }
 
@@ -633,7 +708,7 @@ export function createRenderer(canvas) {
       x0: camera.x - half.w, y0: camera.y - half.h,
       x1: camera.x + half.w, y1: camera.y + half.h,
     };
-    drawBackground(view);
+    drawBackground(game.state.time);
     drawArena(view);
     drawPath(game.state.time);
     drawSpawnGate(game.state.time);
@@ -642,6 +717,7 @@ export function createRenderer(canvas) {
     drawBuildings(game);
     drawTowers(game);
     drawEnemies(game);
+    drawBeams(game);
     drawProjectiles(game);
     drawFx(game);
     drawDrag(game);
