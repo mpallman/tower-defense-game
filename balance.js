@@ -117,23 +117,27 @@ export const BALANCE = {
       color: '#a8a29e',
     },
     plant: {
-      name: 'Power plant', blurb: 'Needs no input. Runs lasers in range.',
+      name: 'Power plant', blurb: 'Needs no input. Runs lasers and factories.',
       cost: 140, costGrowth: 1.45, radius: 105,
       produces: { power: 2.2 },
       supplies: ['power'],
       color: '#facc15',
     },
+    // Both fabs burn power as well as ore, so plants are not a laser-only
+    // building and the four resources form one chain rather than four straight
+    // lines. Lasers draw on the same pool, which is where the interesting
+    // failure lives: overbuild them and the ammo line browns out.
     ammofab: {
-      name: 'Ammo factory', blurb: 'Turns ore into turret rounds.',
+      name: 'Ammo factory', blurb: 'Ore and power into turret rounds.',
       cost: 120, costGrowth: 1.42, radius: 105,
-      consumes: { ore: 0.7 }, produces: { ammo: 1.7 },
+      consumes: { ore: 0.7, power: 0.5 }, produces: { ammo: 1.7 },
       supplies: ['ammo'],
       color: '#38bdf8',
     },
     shellfab: {
-      name: 'Shell fab', blurb: 'Turns ore into mortar shells.',
+      name: 'Shell fab', blurb: 'Ore and power into mortar shells.',
       cost: 300, costGrowth: 1.5, radius: 105,
-      consumes: { ore: 1.2 }, produces: { shells: 0.55 },
+      consumes: { ore: 1.2, power: 0.9 }, produces: { shells: 0.55 },
       supplies: ['shells'],
       color: '#fb923c',
     },

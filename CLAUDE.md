@@ -33,7 +33,8 @@ Tone: cold, clean, readable at a glance on a small screen.
    build panel. No fixed slots. The arena is larger than the screen: one finger
    pans, two pinch to zoom, and a touch that goes nowhere is a tap.
 5. Buildings make and move the resources. Miners must sit on an ore node;
-   factories turn ore into rounds and shells; power plants need no input. Stock
+   factories turn ore *and power* into rounds and shells; power plants need no
+   input. Lasers draw on the same power, so the base and the guns compete. Stock
    is global, but a tower only draws from a building whose radius covers it, so
    layout is the puzzle. A run opens with one free, stocked depot by the vault.
    Ore nodes are finite, so production scales through upgrades and prestige

@@ -8,7 +8,7 @@ import { BALANCE } from './balance.js';
 import * as Save from './save.js';
 import {
   freshResources, stepEconomy, payForShot, towerProblem,
-  suppliedAt, flowRates, oreNodeAt, RESOURCE_KEYS,
+  suppliedAt, flowRates, oreNodeAt, buildingProblem, RESOURCE_KEYS,
 } from './economy.js';
 import * as Place from './placement.js';
 import * as Derive from './derive.js';
@@ -384,6 +384,10 @@ export function createGame(options = {}) {
     }
 
     // towers
+    // Buildings draw before towers fire, and that order is load-bearing: a
+    // factory's continuous draw therefore outranks a tower's per-shot draw.
+    // When power runs short the guns go quiet, visibly and locally, instead of
+    // the ammo line collapsing and taking every turret down with it.
     stepEconomy(state, dt);
 
     for (const tower of state.towers) {
@@ -834,6 +838,7 @@ export function createGame(options = {}) {
   api.buildingCost = buildingCost;
   api.flowRates = () => flowRates(state);
   api.towerProblem = (tower) => towerProblem(state, tower);
+  api.buildingProblem = (building) => buildingProblem(state, building);
   api.suppliedAt = (x, y) => suppliedAt(state, x, y);
   api.oreNodeAt = (x, y) => oreNodeAt(LEVEL.oreNodes, x, y, state.buildings);
 

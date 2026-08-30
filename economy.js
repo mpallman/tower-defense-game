@@ -70,39 +70,64 @@ export function payForShot(state, tower) {
   return true;
 }
 
-// One building's output this step, limited by whatever it needs as input.
-// Returns the fraction of full rate it actually managed, for the UI.
-function runBuilding(state, building, dt, speed) {
-  const def = BALANCE.buildings[building.type];
-  if (!def.produces) return 1;
+// One simulation step, in two passes so that nothing depends on the order
+// buildings happen to sit in the array.
+//
+// Pass one runs the sources — miners and plants, which need no input. Pass two
+// runs the converters against what is actually in the pool, sharing each
+// resource *proportionally* when there is not enough to go round. Serving them
+// first-come-first-served instead would leave two identical factories running
+// at completely different rates with nothing on screen to explain why; a
+// shared brownout slows the whole base together, which is legible at a glance
+// from the flow readout.
+export function stepEconomy(state, dt) {
+  const speed = outputMult(state);
 
-  let ratio = 1;
-  if (def.consumes) {
-    for (const [key, rate] of Object.entries(def.consumes)) {
-      const want = rate * speed * dt;
-      if (want <= 0) continue;
-      ratio = Math.min(ratio, want <= state.resources[key] ? 1 : state.resources[key] / want);
+  for (const building of state.buildings) {
+    const def = BALANCE.buildings[building.type];
+    building.short = null;
+    building.rate = 1;
+    if (!def.produces || def.consumes) continue;
+    for (const [key, rate] of Object.entries(def.produces)) {
+      state.resources[key] = Math.min(capOf(key), state.resources[key] + rate * speed * dt);
     }
   }
-  // A converter with no input at all does nothing rather than a little.
-  if (ratio <= 0) return 0;
 
-  if (def.consumes) {
+  // What every converter would like, added up per resource.
+  const demand = {};
+  const converters = [];
+  for (const building of state.buildings) {
+    const def = BALANCE.buildings[building.type];
+    if (!def.produces || !def.consumes) continue;
+    converters.push(building);
+    for (const [key, rate] of Object.entries(def.consumes)) {
+      demand[key] = (demand[key] || 0) + rate * speed * dt;
+    }
+  }
+  if (!converters.length) return;
+
+  // The share of each resource everyone gets, and which one is scarcest.
+  const share = {};
+  for (const [key, want] of Object.entries(demand)) {
+    share[key] = want <= 0 ? 1 : Math.min(1, state.resources[key] / want);
+  }
+
+  for (const building of converters) {
+    const def = BALANCE.buildings[building.type];
+    let ratio = 1;
+    let short = null;
+    for (const key of Object.keys(def.consumes)) {
+      if (share[key] < ratio) { ratio = share[key]; short = key; }
+    }
+    building.rate = ratio;
+    building.short = short;
+    if (ratio <= 0) continue;
     for (const [key, rate] of Object.entries(def.consumes)) {
       state.resources[key] = Math.max(0, state.resources[key] - rate * speed * dt * ratio);
     }
-  }
-  for (const [key, rate] of Object.entries(def.produces)) {
-    state.resources[key] = Math.min(capOf(key), state.resources[key] + rate * speed * dt * ratio);
-  }
-  return ratio;
-}
-
-// Advance every building one simulation step.
-export function stepEconomy(state, dt) {
-  const speed = outputMult(state);
-  for (const building of state.buildings) {
-    building.rate = runBuilding(state, building, dt, speed);
+    for (const [key, rate] of Object.entries(def.produces)) {
+      state.resources[key] = Math.min(capOf(key), state.resources[key] + rate * speed * dt * ratio);
+    }
   }
 }
 
@@ -134,6 +159,17 @@ export function towerProblem(state, tower) {
   if (!towerIsSupplied(state, tower)) return 'no supply line';
   if (state.resources[key] < (BALANCE.towers[tower.type].ammoPerShot || 0)) return `out of ${BALANCE.resources[key].name.toLowerCase()}`;
   return null;
+}
+
+// What a building is waiting on, or null if it is running at full rate. Named
+// by input, because "no power" and "no ore" want different answers from you.
+export function buildingProblem(state, building) {
+  const def = BALANCE.buildings[building.type];
+  if (!def.produces) return null;
+  const rate = building.rate == null ? 1 : building.rate;
+  if (rate > 0.999 || !building.short) return null;
+  const name = BALANCE.resources[building.short].name.toLowerCase();
+  return rate <= 0 ? `stalled — no ${name}` : `short of ${name}`;
 }
 
 // Is a miner allowed here? It must be sitting on an unclaimed ore node.

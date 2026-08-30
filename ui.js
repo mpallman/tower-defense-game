@@ -430,11 +430,11 @@ export function createUI({ game, audio, toast, makeDraggable }) {
       art.style.backgroundImage = `url(${buildingSpriteUrl(building.type, 46)})`;
       setText(name, def.name);
       setText(sub, `reaches ${def.radius} around itself`);
-      const starved = def.produces && building.rate < 0.999;
-      setText(statusText, starved
-        ? (building.rate <= 0 ? 'stalled — no ore to work with' : `running at ${Math.round(building.rate * 100)}%`)
-        : def.produces ? 'running' : 'relaying whatever is in range');
-      status.classList.toggle('warn', !!starved);
+      const problem = game.buildingProblem(building);
+      setText(statusText, problem
+        ? `${problem} · ${Math.round(building.rate * 100)}%`
+        : def.produces ? 'running at full rate' : 'relaying whatever is in range');
+      status.classList.toggle('warn', !!problem);
       setText(refund, `+${formatNumber(Math.floor(building.spent * BALANCE.economy.sellRefund))}`);
     });
     return wrap;

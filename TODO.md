@@ -8,11 +8,11 @@ first; nothing important lives only in a chat log.
 **Branch and deploy.** Work on `claude/create-claude-md-p5kzrk`. It is the
 repo's default branch and GitHub Pages deploys straight from it, so a push is a
 deploy — there is no PR, no merge, no staging. Bump `CACHE` in `sw.js` on every
-change (`vault-defense-v10` → `-v11`), or phones with the game installed keep
+change (`vault-defense-v11` → `-v12`), or phones with the game installed keep
 serving the old build from cache. After a deploy the phone needs two reloads:
 the first fetches, the second swaps the new cache in.
 
-**Tests.** `node test/run.mjs`. 127 checks, all passing as of the buildings pass.
+**Tests.** `node test/run.mjs`. 133 checks, all passing as of the power-chain pass.
 It boots the real page in headless Chromium, so it catches things unit tests
 would not. It needs no install: Playwright is installed globally in the dev
 container and the script resolves it via `npm root -g`, which keeps the repo at
@@ -107,6 +107,16 @@ each keep a separate save.
   being competed with.
 - Cosmetic events (`shot`, `kill`, `leak`) are only emitted when
   `api.cosmetics` is true, so a fast-forward doesn't generate millions of them.
+- A simulation step runs the economy in two passes, then the towers. Pass one
+  runs the sources (miners, plants, which need no input); pass two runs the
+  converters against the pool, sharing a scarce resource *proportionally*.
+  First-come-first-served by array position left two identical factories at
+  completely different rates with nothing on screen to explain it; a shared
+  brownout slows the base together and reads straight off the flow numbers.
+- Buildings draw before towers fire, and that order is load-bearing. A
+  factory's continuous draw outranks a tower's per-shot draw, so overbuilding
+  lasers silences the lasers rather than collapsing the ammo line and taking
+  every turret with it. Failure stays local and visible.
 - The economy splits stock from reach on purpose. Stock is global — one number
   per resource, so there is no hauling to simulate. Reach is local: a tower
   fires only if some building that *supplies* its resource has it inside that
@@ -138,7 +148,9 @@ each keep a separate save.
 - Boss modifiers: shielded, splitting, speeds up when damaged.
 - Auto-pause when a boss wave starts, as an option.
 - A run summary on breach: what killed you, what your towers contributed.
-- Power as capacity rather than stock. Right now all four resources are the
+- Power as capacity rather than stock.
+- Adjacency bonuses, or per-building upgrade levels — the two base-depth ideas
+  that lost out to making factories need power. Right now all four resources are the
   same stock-and-flow model, which keeps one mental model and one starvation
   rule; "each laser needs 1 power slot" would read more naturally but needs its
   own UI to explain why a laser silently switched off.

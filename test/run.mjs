@@ -116,6 +116,7 @@ async function main() {
       game.buildBuilding(110, 120, 'depot'),
       game.buildBuilding(240, 222, 'depot'),
       game.buildBuilding(250, -105, 'miner'),
+      game.buildBuilding(-60, 250, 'plant'),      // the factory needs power too
       game.buildBuilding(200, 120, 'ammofab'),
     ];
     const spots = [[30, 120], [150, 120], [240, 120], [150, 222]];
@@ -558,9 +559,13 @@ async function main() {
     game.advanceBy(3);
     const starved = { rate: game.buildingById(fab.id).rate, made: game.state.resources.ammo - ammoBefore };
 
-    // Give it a miner and the chain runs.
+    // Ore alone is not enough now: the whole chain has to be there.
     const [nx, ny] = LEVEL.oreNodes[0];
     game.buildBuilding(nx, ny, 'miner');
+    game.advanceBy(20);
+    const oreOnly = { rate: game.buildingById(fab.id).rate, short: game.buildingById(fab.id).short };
+
+    game.buildBuilding(-100, 380, 'plant');
     game.advanceBy(30);
     const running = {
       rate: game.buildingById(fab.id).rate,
@@ -570,16 +575,81 @@ async function main() {
     // A power plant needs no input at all.
     game.buildBuilding(-100, 380, 'plant');
     game.advanceBy(10);
-    return { starved, running, power: game.state.resources.power, flows: game.flowRates() };
+    return { starved, oreOnly, running, power: game.state.resources.power, flows: game.flowRates() };
   });
   check('a factory with no ore stalls instead of inventing it',
     chain.starved.rate === 0 && chain.starved.made === 0, JSON.stringify(chain.starved));
-  check('a miner feeding a factory produces ammo',
+  check('ore without power is not enough for a factory',
+    chain.oreOnly.rate === 0 && chain.oreOnly.short === 'power', JSON.stringify(chain.oreOnly));
+  check('ore and power together produce ammo',
     chain.running.rate > 0.99 && chain.running.ammo > 10, JSON.stringify(chain.running));
   check('a power plant needs no input', chain.power > 10, `${chain.power.toFixed(1)} power`);
   check('the panel reports net flow, production minus consumption',
     Math.abs(chain.flows.ore - 0.2) < 0.001 && Math.abs(chain.flows.ammo - 1.7) < 0.001,
     JSON.stringify(chain.flows));
+
+  // Lasers and factories share the power pool, so overbuilding lasers is what
+  // browns the ammo line out. That competition is the point of the change.
+  const brownout = await page.evaluate(() => {
+    const { game, LEVEL } = globalThis.__td;
+    game.hardReset();
+    game.state.credits = 500_000;
+    game.buildBuilding(LEVEL.oreNodes[0][0], LEVEL.oreNodes[0][1], 'miner');
+    // The plant sits in the top corridor, where lasers around it can both draw
+    // from it and reach the path. The factory is far away on purpose: stock is
+    // global, so only the lasers need to be near the plant.
+    game.buildBuilding(110, 120, 'plant');
+    const fab = game.buildBuilding(-100, 300, 'ammofab');
+    game.advanceBy(60);
+    const healthy = { rate: game.buildingById(fab.id).rate, power: game.state.resources.power };
+
+    const spots = [[30, 120], [70, 120], [150, 120], [190, 120], [230, 120]];
+    const built = spots.map(([x, y]) => game.buildTower(x, y, 'laser'));
+    // Late-wave enemies, so the lasers keep firing instead of one-shotting a
+    // wave-1 grunt and going quiet again.
+    game.state.wave = 30;
+    game.state.phase = 'wave';
+    game.state.queue = Array(12).fill('grunt');
+    game.state.resources.power = 0;
+    for (let i = 0; i < 60 && !game.state.enemies.length; i++) game.advanceBy(0.5);
+    game.advanceBy(20);
+    const firing = game.state.towers.filter((t) => t.type === 'laser' && !t.starved).length;
+    const contended = { rate: game.buildingById(fab.id).rate, short: game.buildingById(fab.id).short };
+    return { lasers: built.filter((b) => b.ok).length, firing, healthy, contended };
+  });
+  check('a lone factory with its own plant runs at full rate',
+    brownout.healthy.rate > 0.99, JSON.stringify(brownout.healthy));
+  // Buildings draw before towers fire, so the factory keeps its share and the
+  // guns are what go quiet. That is the intended way round: a visible, local
+  // failure instead of the ammo line collapsing and taking the turrets with it.
+  check('too many lasers on one plant starve the lasers, not the factory',
+    brownout.lasers === 5 && brownout.firing === 0 && brownout.contended.rate > 0.99,
+    JSON.stringify(brownout));
+
+  // Factories competing with each other is the other half: demand from the
+  // buildings alone can outrun a single plant.
+  const overbuilt = await page.evaluate(() => {
+    const { game, LEVEL } = globalThis.__td;
+    game.hardReset();
+    game.state.credits = 500_000;
+    for (const [x, y] of LEVEL.oreNodes) game.buildBuilding(x, y, 'miner');
+    game.buildBuilding(110, 120, 'plant');
+    const fabs = [250, 300, 350, 400, 450, 500, 550, 600]
+      .map((y) => game.buildBuilding(-30, y, 'ammofab'));
+    game.state.resources.power = 0;
+    game.advanceBy(60);
+    const built = fabs.filter((f) => f.ok);
+    return {
+      fabs: built.length,
+      rates: built.map((f) => +game.buildingById(f.id).rate.toFixed(2)),
+      short: built.map((f) => game.buildingById(f.id).short),
+      flows: game.flowRates(),
+    };
+  });
+  check('more factories than one plant can feed run short of power',
+    overbuilt.fabs >= 7 && overbuilt.rates.every((r) => r < 0.99)
+    && overbuilt.short.every((k) => k === 'power'),
+    JSON.stringify({ fabs: overbuilt.fabs, rates: overbuilt.rates }));
 
   const stockCap = await page.evaluate(() => {
     const { game, BALANCE } = globalThis.__td;
@@ -949,6 +1019,27 @@ async function main() {
     cards.map((c) => `${c.name} ${c.art}`).join(' | '));
   check('tower cards show stats and a price', cards.every((c) => c.chips === 4 && c.cost.length > 0),
     cards.map((c) => `${c.name} ${c.cost}`).join(' | '));
+
+  const buildingCards = await page.evaluate(() => {
+    globalThis.__td.setTab('base');
+    const out = [];
+    for (const card of document.querySelectorAll('#panel .card.building')) {
+      out.push({
+        name: card.querySelector('.name').textContent,
+        chips: [...card.querySelectorAll('.chip')].map((c) => c.title),
+        art: getComputedStyle(card.querySelector('.tile')).backgroundImage.slice(0, 22),
+      });
+    }
+    globalThis.__td.setTab('build');
+    return out;
+  });
+  const fabCard = buildingCards.find((c) => c.name === 'Ammo factory');
+  check('every building has a card with its own sprite',
+    buildingCards.length === 5 && buildingCards.every((c) => c.art.startsWith('url("data:image/png')),
+    buildingCards.map((c) => c.name).join(', '));
+  check('a factory card lists both of its inputs',
+    !!fabCard && fabCard.chips.some((t) => t.includes('Ore')) && fabCard.chips.some((t) => t.includes('Power')),
+    fabCard && fabCard.chips.join(' | '));
 
   const roster = await page.evaluate(() => {
     const { game, ui } = globalThis.__td;
