@@ -554,6 +554,74 @@ async function main() {
   check('selling a free build gives the grant back',
     firstRun.resold.left === 1 && firstRun.resold.cost === 0, JSON.stringify(firstRun.resold));
 
+  // --- the bootstrap ---------------------------------------------------
+  // Nothing in the ammo chain pays out until all three of miner, plant and
+  // factory are standing — ore alone is useless, power alone is useless. So
+  // the opening reserve has to outlast the whole bootstrap. It did not: the
+  // chain cost roughly eight minutes of income while the reserve ran out at
+  // five, the turret went quiet, and with it the income that was paying for
+  // the chain. This plays the intended opening and checks the reserve gets
+  // you there, so a later cost change cannot quietly re-open that gap.
+  section('the bootstrap');
+  const bootstrap = await page.evaluate(() => {
+    const { game, LEVEL } = globalThis.__td;
+    const spot = (kind, type, near) => {
+      for (let r = 0; r <= 240; r += 8) {
+        for (let a = 0; a < Math.PI * 2; a += Math.PI / 12) {
+          const x = near[0] + Math.cos(a) * r, y = near[1] + Math.sin(a) * r;
+          const ok = kind === 'tower'
+            ? game.canPlaceAt(x, y).ok : game.canPlaceBuildingAt(x, y, type).ok;
+          if (ok) return [x, y];
+        }
+      }
+      return null;
+    };
+    game.hardReset();
+    const ore = LEVEL.oreNodes
+      .map((n) => [n, Math.min(...LEVEL.path.map((p) => Math.hypot(p[0] - n[0], p[1] - n[1])))])
+      .sort((a, b) => a[1] - b[1])[0][0];
+    const places = {
+      depot: spot('building', 'depot', [40, 130]),
+      turret: spot('tower', 'turret', [80, 112]),
+      miner: spot('building', 'miner', ore),
+      plant: spot('building', 'plant', [40, 210]),
+      ammofab: spot('building', 'ammofab', [40, 300]),
+    };
+    game.buildBuilding(places.depot[0], places.depot[1], 'depot');
+    game.buildTower(places.turret[0], places.turret[1], 'turret');
+
+    const plan = ['miner', 'plant', 'ammofab'];
+    let next = 0, dry = null, chainDone = null, low = Infinity, stuck = null;
+    for (let s = 0; s < 400; s += 1) {
+      game.advanceBy(1);
+      if (next < plan.length && game.state.credits >= game.buildingCost(plan[next])) {
+        const p = places[plan[next]];
+        const res = p ? game.buildBuilding(p[0], p[1], plan[next]) : { ok: false, reason: 'no spot' };
+        if (res.ok) {
+          next += 1;
+          if (next === plan.length) chainDone = s;
+        } else stuck = `${plan[next]}: ${res.reason}`;
+      }
+      low = Math.min(low, game.state.resources.ammo);
+      if (dry === null && game.state.resources.ammo <= 0.01) dry = s;
+    }
+    return {
+      dry, chainDone, low: Math.round(low),
+      making: game.state.resources.ammo > 0 && game.flowRates().ammo > 0,
+      bestWave: game.state.bestWave,
+      stuck, built: next,
+    };
+  });
+  check('the opening reserve outlasts the ammo chain',
+    bootstrap.dry === null, bootstrap.dry === null ? `low water ${bootstrap.low}` : `dry at ${bootstrap.dry}s`);
+  check('the chain gets built, and then makes ammo',
+    bootstrap.chainDone !== null && bootstrap.making,
+    bootstrap.chainDone !== null
+      ? `chain done at ${bootstrap.chainDone}s`
+      : `only ${bootstrap.built}/3 built — stuck on ${bootstrap.stuck}`);
+  check('and the run is still going when it does',
+    bootstrap.bestWave >= 6, `reached wave ${bootstrap.bestWave}`);
+
   // --- the ground layer ------------------------------------------------
   // The floor is baked at a quantised resolution but must be *drawn* at the
   // exact one, or it scales in steps while the towers on it scale smoothly and

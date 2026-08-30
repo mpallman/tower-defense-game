@@ -36,7 +36,13 @@ export const BALANCE = {
     // *pay* for is priced as the first. Selling a free build hands the grant
     // back, so you can never end up unable to replace it.
     freeBuilds: { depot: 1, turret: 1 },
-    startingStock: { ore: 0, power: 0, ammo: 140, shells: 0 },
+    // The opening reserve. It has to outlast the bootstrap, because *nothing*
+    // in the ammo chain pays out until all three of miner, plant and factory
+    // are standing: ore alone is useless, power alone is useless. Run dry
+    // before then and the turret stops, which stops the income, which stops
+    // the chain — measured at 140 with the old costs: dry at 5 minutes, chain
+    // never finished, vault gone by wave 8, from every play style tried.
+    startingStock: { ore: 0, power: 0, ammo: 220, shells: 0 },
     oreSnap: 24,                 // how close a miner must sit to a node's centre
     buildingRadius: 20,          // footprint, as towers have towerRadius
   },
@@ -116,9 +122,13 @@ export const BALANCE = {
       supplies: ['ore', 'power', 'ammo', 'shells'],
       color: '#94a3b8',
     },
+    // The three costs below are one number in practice: the price of the
+    // first round of ammo you make yourself. They were 70 + 140 + 120 = 330,
+    // which is roughly a player's entire first eight minutes of income, while
+    // the opening reserve ran out at five. Now 250, against a 220 reserve.
     miner: {
       name: 'Miner', blurb: 'Must stand on an ore node.',
-      cost: 70, costGrowth: 1.4, radius: 80,
+      cost: 60, costGrowth: 1.4, radius: 80,
       needsOre: true,
       produces: { ore: 0.9 },
       supplies: ['ore'],
@@ -126,7 +136,7 @@ export const BALANCE = {
     },
     plant: {
       name: 'Power plant', blurb: 'Needs no input. Runs lasers and factories.',
-      cost: 140, costGrowth: 1.45, radius: 105,
+      cost: 100, costGrowth: 1.45, radius: 105,
       produces: { power: 2.2 },
       supplies: ['power'],
       color: '#facc15',
@@ -137,7 +147,7 @@ export const BALANCE = {
     // failure lives: overbuild them and the ammo line browns out.
     ammofab: {
       name: 'Ammo factory', blurb: 'Ore and power into turret rounds.',
-      cost: 120, costGrowth: 1.42, radius: 105,
+      cost: 90, costGrowth: 1.42, radius: 105,
       consumes: { ore: 0.7, power: 0.5 }, produces: { ammo: 1.7 },
       supplies: ['ammo'],
       color: '#38bdf8',

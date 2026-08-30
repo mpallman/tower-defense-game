@@ -12,7 +12,7 @@ change (`vault-defense-v11` → `-v12`), or phones with the game installed keep
 serving the old build from cache. After a deploy the phone needs two reloads:
 the first fetches, the second swaps the new cache in.
 
-**Tests.** `node test/run.mjs`. 143 checks, all passing as of the free opening.
+**Tests.** `node test/run.mjs`. 146 checks, all passing as of the bootstrap fix.
 It boots the real page in headless Chromium, so it catches things unit tests
 would not. It needs no install: Playwright is installed globally in the dev
 container and the script resolves it via `npm root -g`, which keeps the repo at
@@ -54,6 +54,34 @@ before the trap forced it up. Three rules hold it together, each with a test:
   a dead spot in amber, and the Build tab points a fresh run at the depot
   first. Placing somewhere dead is still allowed — the depot that feeds it may
   be the next thing you place.
+
+**The bootstrap was unsurvivable, and the reason is structural, not arithmetic.**
+Nothing in the ammo chain pays out until all three of miner, plant and factory
+are standing: a miner alone piles up ore you cannot use, a plant alone piles up
+power you cannot use. So the whole chain is one purchase with one payout, and
+it has to be funded by an income that *stops* the moment the opening reserve
+runs out — the turret goes quiet, the kills stop, the credits stop, and the
+chain is never finished. Measured on the old numbers, from every play style
+tried: dry at five minutes, chain never completed, vault gone by wave 8.
+
+The chain cost 330, which is roughly a player's entire first eight minutes of
+income, against a reserve that lasted five. It is now 250 (miner 60, plant 100,
+factory 90) against a reserve of 220. Measured now: a disciplined opening
+finishes the chain at 5m10s with 78 ammo still in hand; a player who buys one
+extra turret first finishes at 3m and reaches wave 10, because more guns is
+more income; one who buys two touches zero briefly and recovers. That spread is
+the point — greed is rewarded and then punished, rather than every route ending
+the same way.
+
+`test/run.mjs` plays that opening and asserts the reserve outlasts the chain, so
+moving any of those four numbers fails a test rather than quietly re-opening the
+gap. If the chain ever grows a fourth brick, that budget has to be re-measured.
+
+**Still open, and the owner's call.** The no-partial-payout shape is untouched:
+buying a miner still does nothing on its own. That is defensible — it makes the
+supply chain a real commitment — but it is why the opening is so sensitive to
+these four numbers, and it is worth deciding whether the factory should run on
+ore alone, with power only for lasers and shells.
 
 **The open design question**, raised from real play: waves are dead time when
 you have no money to spend. The 2×/4× speed button is a workaround, not a fix.
