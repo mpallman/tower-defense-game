@@ -460,7 +460,7 @@ export function createUI({ game, audio, toast, makeDraggable }) {
     const card = el('button', 'row card upgrade');
     card.type = 'button';
     const art = el('i', 'tile glyph-tile');
-    art.append(glyph(key === 'damage' ? 'damage' : key === 'rate' ? 'rate' : 'range'));
+    art.append(glyph(def.icon));
 
     const body = el('div', 'body');
     const head = el('div', 'headline');

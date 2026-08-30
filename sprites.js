@@ -364,127 +364,255 @@ export function bakeTowerHead(key, def) {
 }
 
 // ---------------------------------------------------------- building art ---
-// Buildings must not be mistaken for towers at a glance, so they are squares
-// with a roof, where every tower is an octagon with a barrel. Silhouette does
-// the work; the icon inside says which kind it is.
+// Buildings are industrial blocks: a footprint slab, a structure on top, and
+// the one feature that says what it does — a headframe, a chimney, a cooling
+// stack. They must never be mistaken for a tower at a glance, so nothing here
+// is an octagon and nothing has a barrel.
 export const BUILDING_R = BALANCE.economy.buildingRadius;
 
-function roofIcon(ctx, key, r, tint) {
-  ctx.strokeStyle = tint;
-  ctx.lineWidth = 1.4;
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
+// Buildings are built out of near-neutral dark steel, exactly like the tower
+// bases, and carry their colour only in edges and lit windows. A slab filled
+// with the tint reads as a UI chip dropped on the map, not as a structure —
+// and it drowns out the towers and the wave, which are what you watch.
+const STEEL_TOP = '#26314a';
+const STEEL_MID = '#151f31';
+const STEEL_LOW = '#0b1220';
 
-  if (key === 'miner') {                       // a pick over a heap
-    ctx.beginPath();
-    ctx.moveTo(-r * 0.4, r * 0.35);
-    ctx.lineTo(r * 0.4, -r * 0.4);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(r * 0.1, -r * 0.55);
-    ctx.quadraticCurveTo(r * 0.55, -r * 0.3, r * 0.55, r * 0.05);
-    ctx.stroke();
-    return;
-  }
-  if (key === 'plant') {                       // a bolt
-    ctx.beginPath();
-    ctx.moveTo(r * 0.22, -r * 0.6);
-    ctx.lineTo(-r * 0.3, r * 0.05);
-    ctx.lineTo(r * 0.05, r * 0.05);
-    ctx.lineTo(-r * 0.16, r * 0.62);
-    ctx.lineTo(r * 0.36, -r * 0.05);
-    ctx.lineTo(r * 0.02, -r * 0.05);
-    ctx.closePath();
-    ctx.fillStyle = tint;
-    ctx.fill();
-    return;
-  }
-  if (key === 'ammofab' || key === 'shellfab') {   // a round, pointed or fat
-    const w = key === 'shellfab' ? r * 0.34 : r * 0.22;
-    ctx.beginPath();
-    ctx.moveTo(0, -r * 0.62);
-    ctx.lineTo(w, -r * 0.2);
-    ctx.lineTo(w, r * 0.5);
-    ctx.lineTo(-w, r * 0.5);
-    ctx.lineTo(-w, -r * 0.2);
-    ctx.closePath();
-    ctx.fillStyle = tint;
-    ctx.fill();
-    if (key === 'shellfab') {
-      ctx.strokeStyle = 'rgba(6,10,18,0.65)';
-      ctx.lineWidth = 1;
+// The concrete pad every building sits on.
+function slab(ctx, r, def) {
+  ctx.beginPath();
+  ctx.ellipse(0, r * 0.5, r * 0.98, r * 0.42, 0, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.fill();
+
+  const s = r * 0.9;
+  const pad = ctx.createLinearGradient(0, -s, 0, s);
+  pad.addColorStop(0, '#141d2d');
+  pad.addColorStop(1, '#0a111c');
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(-s, -s, s * 2, s * 2, 3);
+  else ctx.rect(-s, -s, s * 2, s * 2);
+  ctx.fillStyle = pad;
+  ctx.fill();
+  ctx.lineWidth = 1.2;
+  ctx.strokeStyle = rgba(def.color, 0.55);
+  ctx.stroke();
+
+  // corner anchors
+  ctx.fillStyle = rgba('#ffffff', 0.14);
+  for (const sx of [-1, 1]) {
+    for (const sy of [-1, 1]) {
       ctx.beginPath();
-      ctx.moveTo(-w, r * 0.16);
-      ctx.lineTo(w, r * 0.16);
-      ctx.stroke();
+      ctx.arc(sx * s * 0.82, sy * s * 0.82, 1.1, 0, Math.PI * 2);
+      ctx.fill();
     }
-    return;
   }
-  // depot: crates
+}
+
+// A boxy structure, used as the body of most buildings.
+function block(ctx, x, y, w, h, def, lit = true) {
+  const grad = ctx.createLinearGradient(x, y - h, x, y + h);
+  grad.addColorStop(0, STEEL_TOP);
+  grad.addColorStop(0.55, STEEL_MID);
+  grad.addColorStop(1, STEEL_LOW);
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(x - w, y - h, w * 2, h * 2, 1.5);
+  else ctx.rect(x - w, y - h, w * 2, h * 2);
+  ctx.fillStyle = grad;
+  ctx.fill();
+  ctx.lineWidth = 0.8;
+  ctx.strokeStyle = rgba(def.color, 0.7);
+  ctx.stroke();
+  if (lit) {
+    ctx.fillStyle = rgba('#ffffff', 0.06);
+    ctx.fillRect(x - w, y - h, w * 2, h * 0.45);
+  }
+}
+
+function windows(ctx, x, y, w, h, cols, rows, tint) {
+  const cw = (w * 2) / (cols * 2 - 1);
+  const ch = (h * 2) / (rows * 2 - 1);
   ctx.fillStyle = tint;
-  for (const [cx, cy, cs] of [[-r * 0.3, r * 0.1, r * 0.3], [r * 0.28, r * 0.16, r * 0.24], [-r * 0.02, -r * 0.34, r * 0.26]]) {
-    ctx.fillRect(cx - cs, cy - cs, cs * 2, cs * 2);
+  for (let i = 0; i < cols; i++) {
+    for (let j = 0; j < rows; j++) {
+      ctx.fillRect(x - w + i * cw * 2, y - h + j * ch * 2, cw, ch);
+    }
   }
 }
 
 export function bakeBuilding(key, def) {
-  return bake(BUILDING_R + 2, (ctx, r) => {
-    ctx.beginPath();
-    ctx.ellipse(0, r * 0.42, r * 0.95, r * 0.42, 0, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(0,0,0,0.35)';
-    ctx.fill();
+  return bake(BUILDING_R + 3, (ctx, r) => {
+    slab(ctx, r, def);
+    const glow = shade(def.color, 60);
 
-    const side = r * 0.82;
-    const body = ctx.createLinearGradient(0, -side, 0, side);
-    body.addColorStop(0, shade(def.color, -35));
-    body.addColorStop(0.55, shade(def.color, -85));
-    body.addColorStop(1, shade(def.color, -125));
-    ctx.beginPath();
-    if (ctx.roundRect) ctx.roundRect(-side, -side, side * 2, side * 2, 3);
-    else ctx.rect(-side, -side, side * 2, side * 2);
-    ctx.fillStyle = body;
+    if (key === 'miner') {
+      // a headframe over a shaft, with a spoil heap beside it
+      ctx.fillStyle = 'rgba(6,10,18,0.75)';
+      ctx.beginPath();
+      ctx.ellipse(-r * 0.15, r * 0.25, r * 0.4, r * 0.22, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = '#5b6c88';
+      ctx.lineWidth = 2;
+      ctx.lineJoin = 'round';
+      ctx.beginPath();                       // the A-frame legs
+      ctx.moveTo(-r * 0.5, r * 0.4);
+      ctx.lineTo(-r * 0.12, -r * 0.62);
+      ctx.lineTo(r * 0.22, r * 0.4);
+      ctx.stroke();
+      ctx.beginPath();                       // cross brace
+      ctx.moveTo(-r * 0.36, -r * 0.05);
+      ctx.lineTo(0.06 * r, -r * 0.05);
+      ctx.stroke();
+      ctx.beginPath();                       // the winding rope
+      ctx.moveTo(-r * 0.12, -r * 0.62);
+      ctx.lineTo(r * 0.5, -r * 0.2);
+      ctx.stroke();
+      ctx.beginPath();                       // the wheel
+      ctx.arc(-r * 0.12, -r * 0.62, r * 0.17, 0, Math.PI * 2);
+      ctx.fillStyle = glow;
+      ctx.fill();
+      // spoil heap
+      ctx.beginPath();
+      ctx.moveTo(r * 0.24, r * 0.5);
+      ctx.lineTo(r * 0.58, -r * 0.05);
+      ctx.lineTo(r * 0.86, r * 0.5);
+      ctx.closePath();
+      ctx.fillStyle = STEEL_MID;
+      ctx.fill();
+      ctx.strokeStyle = rgba(def.color, 0.6);
+      ctx.lineWidth = 0.8;
+      ctx.stroke();
+      return;
+    }
+
+    if (key === 'plant') {
+      // two cooling stacks and a turbine hall
+      block(ctx, 0, r * 0.34, r * 0.78, r * 0.3, def);
+      for (const sx of [-1, 1]) {
+        ctx.beginPath();
+        ctx.moveTo(sx * r * 0.44 - r * 0.2, -r * 0.05);
+        ctx.lineTo(sx * r * 0.44 - r * 0.13, -r * 0.66);
+        ctx.lineTo(sx * r * 0.44 + r * 0.13, -r * 0.66);
+        ctx.lineTo(sx * r * 0.44 + r * 0.2, -r * 0.05);
+        ctx.closePath();
+        const stack = ctx.createLinearGradient(0, -r * 0.66, 0, 0);
+        stack.addColorStop(0, STEEL_TOP);
+        stack.addColorStop(1, STEEL_LOW);
+        ctx.fillStyle = stack;
+        ctx.fill();
+        ctx.strokeStyle = rgba(def.color, 0.7);
+        ctx.lineWidth = 0.8;
+        ctx.stroke();
+        ctx.fillStyle = rgba(def.color, 0.85);
+        ctx.fillRect(sx * r * 0.44 - r * 0.13, -r * 0.66, r * 0.26, r * 0.08);
+      }
+      windows(ctx, 0, r * 0.34, r * 0.6, r * 0.16, 4, 2, glow);
+      return;
+    }
+
+    if (key === 'ammofab' || key === 'shellfab') {
+      // a hall with a sawtooth roof and a chimney; the fab is taller and
+      // gets a second stack, so the two read apart at a glance
+      const heavy = key === 'shellfab';
+      block(ctx, 0, r * 0.3, r * 0.82, r * 0.36, def);
+      windows(ctx, 0, r * 0.34, r * 0.62, r * 0.18, heavy ? 3 : 4, 2, glow);
+
+      ctx.beginPath();                        // sawtooth roof
+      ctx.moveTo(-r * 0.82, -r * 0.06);
+      for (let i = 0; i < 3; i++) {
+        const x0 = -r * 0.82 + (i * r * 1.64) / 3;
+        ctx.lineTo(x0 + r * 0.2, -r * 0.44);
+        ctx.lineTo(x0 + (r * 1.64) / 3, -r * 0.06);
+      }
+      ctx.closePath();
+      ctx.fillStyle = STEEL_LOW;
+      ctx.fill();
+      ctx.strokeStyle = rgba(def.color, 0.65);
+      ctx.lineWidth = 0.8;
+      ctx.stroke();
+
+      const stacks = heavy ? [-0.5, 0.5] : [0.55];
+      for (const sx of stacks) {
+        ctx.fillStyle = STEEL_MID;
+        ctx.fillRect(sx * r - r * 0.1, -r * 0.86, r * 0.2, r * 0.5);
+        ctx.strokeRect(sx * r - r * 0.1, -r * 0.86, r * 0.2, r * 0.5);
+        ctx.fillStyle = rgba(def.color, 0.8);
+        ctx.fillRect(sx * r - r * 0.1, -r * 0.86, r * 0.2, r * 0.07);
+      }
+      return;
+    }
+
+    // depot: a shed with a roller door and stacked crates on the apron
+    block(ctx, -r * 0.18, r * 0.18, r * 0.62, r * 0.48, def);
+    ctx.beginPath();                          // pitched roof
+    ctx.moveTo(-r * 0.86, -r * 0.3);
+    ctx.lineTo(-r * 0.18, -r * 0.72);
+    ctx.lineTo(r * 0.5, -r * 0.3);
+    ctx.closePath();
+    ctx.fillStyle = STEEL_LOW;
     ctx.fill();
-    ctx.lineWidth = 1.3;
-    ctx.strokeStyle = shade(def.color, 50);
+    ctx.strokeStyle = rgba(def.color, 0.65);
+    ctx.lineWidth = 0.9;
     ctx.stroke();
 
-    // corner bolts, so it reads as built rather than drawn
-    ctx.fillStyle = rgba('#ffffff', 0.22);
-    for (const sx of [-1, 1]) {
-      for (const sy of [-1, 1]) {
-        ctx.beginPath();
-        ctx.arc(sx * side * 0.74, sy * side * 0.74, 0.9, 0, Math.PI * 2);
-        ctx.fill();
-      }
+    ctx.fillStyle = 'rgba(6,10,18,0.7)';      // roller door
+    ctx.fillRect(-r * 0.44, -r * 0.06, r * 0.5, r * 0.6);
+    ctx.strokeStyle = glow;
+    ctx.lineWidth = 0.7;
+    for (let i = 1; i < 4; i++) {
+      ctx.beginPath();
+      ctx.moveTo(-r * 0.44, -r * 0.06 + i * r * 0.15);
+      ctx.lineTo(r * 0.06, -r * 0.06 + i * r * 0.15);
+      ctx.stroke();
     }
-    roofIcon(ctx, key, r, shade(def.color, 90));
+    for (const [cx, cy, cs] of [[0.6, 0.42, 0.2], [0.6, 0.02, 0.18], [0.24, 0.52, 0.16]]) {
+      ctx.fillStyle = STEEL_MID;
+      ctx.fillRect(cx * r - cs * r, cy * r - cs * r, cs * r * 2, cs * r * 2);
+      ctx.strokeStyle = rgba(def.color, 0.6);
+      ctx.lineWidth = 0.7;
+      ctx.strokeRect(cx * r - cs * r, cy * r - cs * r, cs * r * 2, cs * r * 2);
+    }
   });
 }
 
-// An ore node: a scatter of crystals in the ground, drawn once.
+// An ore node: a seam of crystals broken out of the ground.
 export function bakeOreNode() {
-  return bake(14, (ctx, r) => {
+  return bake(20, (ctx, r) => {
     ctx.beginPath();
-    ctx.ellipse(0, r * 0.3, r * 0.92, r * 0.42, 0, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.ellipse(0, r * 0.22, r * 0.94, r * 0.5, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
     ctx.fill();
-    const shards = [[0, -0.25, 0.5], [-0.5, 0.12, 0.34], [0.48, 0.08, 0.38]];
+    ctx.beginPath();
+    ctx.ellipse(0, r * 0.2, r * 0.86, r * 0.44, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(35,30,26,0.75)';
+    ctx.fill();
+
+    const shards = [[0.02, -0.3, 0.52], [-0.52, 0.06, 0.36], [0.5, 0.02, 0.4], [-0.2, 0.3, 0.26], [0.26, 0.34, 0.22]];
     for (const [dx, dy, size] of shards) {
       const x = dx * r, y = dy * r, h = size * r;
       ctx.beginPath();
       ctx.moveTo(x, y - h);
-      ctx.lineTo(x + h * 0.62, y + h * 0.32);
-      ctx.lineTo(x, y + h * 0.62);
-      ctx.lineTo(x - h * 0.62, y + h * 0.32);
+      ctx.lineTo(x + h * 0.58, y + h * 0.28);
+      ctx.lineTo(x, y + h * 0.6);
+      ctx.lineTo(x - h * 0.58, y + h * 0.28);
       ctx.closePath();
       const grad = ctx.createLinearGradient(x, y - h, x, y + h);
-      grad.addColorStop(0, '#d6d3d1');
-      grad.addColorStop(1, '#57534e');
+      grad.addColorStop(0, '#e7e5e4');
+      grad.addColorStop(0.5, '#a8a29e');
+      grad.addColorStop(1, '#4a4441');
       ctx.fillStyle = grad;
       ctx.fill();
-      ctx.strokeStyle = 'rgba(231,229,228,0.7)';
+      ctx.strokeStyle = 'rgba(245,245,244,0.65)';
       ctx.lineWidth = 0.7;
       ctx.stroke();
+      ctx.beginPath();                        // a highlight facet
+      ctx.moveTo(x, y - h);
+      ctx.lineTo(x - h * 0.58, y + h * 0.28);
+      ctx.lineTo(x, y + h * 0.6);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(255,255,255,0.16)';
+      ctx.fill();
     }
   });
 }

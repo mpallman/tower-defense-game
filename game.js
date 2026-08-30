@@ -42,9 +42,10 @@ LEVEL.vault = LEVEL.path[LEVEL.path.length - 1];
 // Ore nodes: fixed geometry, like the path. Every one sits well clear of the
 // path so a miner standing on it is never refused for being too close.
 LEVEL.oreNodes = [
-  [-120, -120], [60, -145], [250, -105],
-  [430, 40], [440, 265], [400, 520],
-  [120, 600], [-120, 480], [-130, 180],
+  [-120, -120], [60, -145], [250, -105], [400, -160],
+  [430, 40], [440, 265], [400, 520], [520, 155],
+  [120, 600], [300, 625], [-120, 480], [-140, 610],
+  [-130, 180], [-60, -40],
 ];
 
 LEVEL.bounds = LEVEL.path.reduce((box, [x, y]) => ({
@@ -117,7 +118,9 @@ function freshRunState() {
     credits: BALANCE.economy.startingCredits,
     vaultHp: BALANCE.vault.maxHp,
     runEarned: 0,
-    upgrades: { damage: 0, rate: 0, range: 0 },
+    // Keyed off BALANCE so adding an upgrade never needs a matching edit here.
+    // Missing a key made every derived number NaN, which is a silent failure.
+    upgrades: Object.fromEntries(Object.keys(BALANCE.upgrades).map((key) => [key, 0])),
     towers: [],
     buildings: [],
     resources: freshResources(),

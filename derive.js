@@ -32,6 +32,14 @@ export function towerStats(state, tower) {
   };
 }
 
+// How fast every building runs: the run-scoped upgrade and the permanent
+// prestige bonus, exactly as towers scale with damage and prestige. Applied to
+// what a building eats as well as what it makes, so the ore-to-ammo ratio a
+// factory needs is the same at every level and stays tunable in one place.
+export function outputMult(state) {
+  return upgradeMult(state, 'output') * prestigeMult(state);
+}
+
 export function waveHp(wave) {
   return BALANCE.waves.hpBase * Math.pow(BALANCE.waves.hpGrowth, wave - 1);
 }

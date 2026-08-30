@@ -13,6 +13,7 @@
 // fire. This is not an idle game — see CLAUDE.md.
 
 import { BALANCE } from './balance.js';
+import { outputMult } from './derive.js';
 
 export const RESOURCE_KEYS = Object.keys(BALANCE.resources);
 
@@ -71,14 +72,14 @@ export function payForShot(state, tower) {
 
 // One building's output this step, limited by whatever it needs as input.
 // Returns the fraction of full rate it actually managed, for the UI.
-function runBuilding(state, building, dt) {
+function runBuilding(state, building, dt, speed) {
   const def = BALANCE.buildings[building.type];
   if (!def.produces) return 1;
 
   let ratio = 1;
   if (def.consumes) {
     for (const [key, rate] of Object.entries(def.consumes)) {
-      const want = rate * dt;
+      const want = rate * speed * dt;
       if (want <= 0) continue;
       ratio = Math.min(ratio, want <= state.resources[key] ? 1 : state.resources[key] / want);
     }
@@ -88,19 +89,20 @@ function runBuilding(state, building, dt) {
 
   if (def.consumes) {
     for (const [key, rate] of Object.entries(def.consumes)) {
-      state.resources[key] = Math.max(0, state.resources[key] - rate * dt * ratio);
+      state.resources[key] = Math.max(0, state.resources[key] - rate * speed * dt * ratio);
     }
   }
   for (const [key, rate] of Object.entries(def.produces)) {
-    state.resources[key] = Math.min(capOf(key), state.resources[key] + rate * dt * ratio);
+    state.resources[key] = Math.min(capOf(key), state.resources[key] + rate * speed * dt * ratio);
   }
   return ratio;
 }
 
 // Advance every building one simulation step.
 export function stepEconomy(state, dt) {
+  const speed = outputMult(state);
   for (const building of state.buildings) {
-    building.rate = runBuilding(state, building, dt);
+    building.rate = runBuilding(state, building, dt, speed);
   }
 }
 
@@ -110,9 +112,10 @@ export function stepEconomy(state, dt) {
 export function flowRates(state) {
   const flow = {};
   for (const key of RESOURCE_KEYS) flow[key] = 0;
+  const speed = outputMult(state);
   for (const building of state.buildings) {
     const def = BALANCE.buildings[building.type];
-    const ratio = building.rate == null ? 1 : building.rate;
+    const ratio = (building.rate == null ? 1 : building.rate) * speed;
     if (def.produces) {
       for (const [key, rate] of Object.entries(def.produces)) flow[key] += rate * ratio;
     }

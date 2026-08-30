@@ -34,13 +34,19 @@ export function canPlace(state, x, y, { radius, ignoreId = null, needsOre = fals
     if (!node) return { ok: false, reason: 'must sit on an ore node' };
     if (node.taken) return { ok: false, reason: 'that node is already mined' };
   }
+  // Two footprints may not overlap: the gap is measured between their edges,
+  // not their centres, so a big building keeps its distance properly.
   for (const t of state.towers) {
     if (t.id === ignoreId) continue;
-    if (Math.hypot(x - t.x, y - t.y) < b.minSpacing) return { ok: false, reason: 'too close to another tower' };
+    if (Math.hypot(x - t.x, y - t.y) < radius + b.towerRadius + b.spacingGap) {
+      return { ok: false, reason: 'too close to another tower' };
+    }
   }
   for (const bl of state.buildings) {
     if (bl.id === ignoreId) continue;
-    if (Math.hypot(x - bl.x, y - bl.y) < b.minSpacing) return { ok: false, reason: 'too close to a building' };
+    if (Math.hypot(x - bl.x, y - bl.y) < radius + BALANCE.economy.buildingRadius + b.spacingGap) {
+      return { ok: false, reason: 'too close to a building' };
+    }
   }
   return node ? { ok: true, snapTo: node } : { ok: true };
 }

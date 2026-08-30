@@ -29,8 +29,8 @@ export const BALANCE = {
     // opens with a depot by the vault and rounds already in it.
     startingStock: { ore: 0, power: 0, ammo: 140, shells: 0 },
     startingDepot: [252, 470],   // world coords, near the vault and off the path
-    oreSnap: 18,                 // how close a miner must sit to a node's centre
-    buildingRadius: 13,          // footprint, as towers have towerRadius
+    oreSnap: 24,                 // how close a miner must sit to a node's centre
+    buildingRadius: 20,          // footprint, as towers have towerRadius
   },
 
   vault: {
@@ -141,9 +141,12 @@ export const BALANCE = {
 
   // Run-scoped upgrades. Effect is additive per level: mult = 1 + level * effect.
   upgrades: {
-    damage: { name: 'Damage',    cost: 35, growth: 1.32, effect: 0.16, blurb: '+16% tower damage' },
-    rate:   { name: 'Fire rate', cost: 40, growth: 1.34, effect: 0.09, blurb: '+9% fire rate' },
-    range:  { name: 'Range',     cost: 45, growth: 1.36, effect: 0.05, blurb: '+5% tower range' },
+    damage: { name: 'Damage',    icon: 'damage', cost: 35, growth: 1.32, effect: 0.16, blurb: '+16% tower damage' },
+    rate:   { name: 'Fire rate', icon: 'rate',   cost: 40, growth: 1.34, effect: 0.09, blurb: '+9% fire rate' },
+    range:  { name: 'Range',     icon: 'range',  cost: 45, growth: 1.36, effect: 0.05, blurb: '+5% tower range' },
+    // Without this the economy is flat while the waves grow exponentially, so
+    // the ore nodes become a hard ceiling on how many towers can ever fire.
+    output: { name: 'Throughput', icon: 'base', cost: 50, growth: 1.30, effect: 0.20, blurb: '+20% from every building' },
   },
 
   // Free placement rules. All distances are logical px, centre to centre
@@ -151,7 +154,10 @@ export const BALANCE = {
   build: {
     towerRadius: 12,      // footprint used for every placement check
     pathClearance: 4,     // extra gap between the tower edge and the path edge
-    minSpacing: 26,       // closest two tower centres may sit
+    // Two things may not stand closer than the sum of their footprints plus
+    // this gap. Tower to tower still works out at 26 (12 + 12 + 2), which is
+    // what it has always been.
+    spacingGap: 2,
     vaultClearance: 36,   // keep the vault readable
     edgeMargin: 14,       // keep towers fully inside the logical world
     dragGrabOffset: -30,  // screen px the ghost floats above the finger

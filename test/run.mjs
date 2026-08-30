@@ -630,6 +630,86 @@ async function main() {
     && afterPrestige.buildings[0] === 'depot' && afterPrestige.ammo > 0,
     JSON.stringify(afterPrestige));
 
+  // The ore nodes are finite, so production has to scale with investment or the
+  // economy is flat while the waves grow exponentially.
+  const scaling = await page.evaluate(() => {
+    const { game, LEVEL, BALANCE } = globalThis.__td;
+    game.hardReset();
+    game.state.credits = 10_000_000;
+    for (const [x, y] of LEVEL.oreNodes) game.buildBuilding(x, y, 'miner');
+    const base = game.flowRates().ore;
+
+    for (let i = 0; i < 10; i++) game.buyUpgrade('output');
+    const upgraded = game.flowRates().ore;
+
+    game.state.cores = 50;                        // as a long-run prestige would
+    const prestiged = game.flowRates().ore;
+
+    return {
+      miners: game.state.buildings.filter((b) => b.type === 'miner').length,
+      nodes: LEVEL.oreNodes.length,
+      base,
+      upgraded,
+      prestiged,
+      level: game.state.upgrades.output,
+      expect: 1 + 10 * BALANCE.upgrades.output.effect,
+    };
+  });
+  check('every ore node can take a miner',
+    scaling.miners === scaling.nodes, `${scaling.miners}/${scaling.nodes}`);
+  check('the throughput upgrade lifts production',
+    Math.abs(scaling.upgraded / scaling.base - scaling.expect) < 0.001,
+    `${scaling.base.toFixed(1)} -> ${scaling.upgraded.toFixed(1)} ore/s at level ${scaling.level}`);
+  check('prestige lifts production too', scaling.prestiged > scaling.upgraded * 3,
+    `${scaling.upgraded.toFixed(1)} -> ${scaling.prestiged.toFixed(1)} ore/s`);
+  check('the ore nodes are no longer a hard ceiling', scaling.prestiged > scaling.base * 10,
+    `${scaling.base.toFixed(1)} -> ${scaling.prestiged.toFixed(1)} ore/s`);
+
+  // Every derived number must survive a state built from BALANCE alone. A
+  // missing upgrade key once made all of them NaN, silently.
+  const finite = await page.evaluate(() => {
+    const { game, BALANCE } = globalThis.__td;
+    game.hardReset();
+    const keys = Object.keys(BALANCE.upgrades);
+    const numbers = {
+      ...game.flowRates(),
+      mult: game.prestigeMult(),
+      stats: game.towerStats({ type: 'turret' }).damage,
+      ...Object.fromEntries(keys.map((k) => [`mult:${k}`, game.upgradeMult(k)])),
+      ...Object.fromEntries(keys.map((k) => [`cost:${k}`, game.upgradeCost(k)])),
+    };
+    return {
+      missing: keys.filter((k) => game.state.upgrades[k] === undefined),
+      bad: Object.entries(numbers).filter(([, v]) => !Number.isFinite(v)).map(([k]) => k),
+    };
+  });
+  check('a fresh run has a level for every upgrade in BALANCE',
+    finite.missing.length === 0, finite.missing.join(', '));
+  check('no derived number comes back NaN', finite.bad.length === 0, finite.bad.join(', '));
+
+  // Bigger buildings need bigger gaps, measured edge to edge.
+  const footprints = await page.evaluate(() => {
+    const { game, BALANCE } = globalThis.__td;
+    game.hardReset();
+    game.state.credits = 50_000;
+    const b = BALANCE.build;
+    const br = BALANCE.economy.buildingRadius;
+    game.buildBuilding(-100, 300, 'depot');
+    return {
+      towerTower: b.towerRadius * 2 + b.spacingGap,
+      buildingBuilding: br * 2 + b.spacingGap,
+      tooClose: game.canPlaceBuildingAt(-100 + br * 2, 300, 'depot').reason,
+      farEnough: game.canPlaceBuildingAt(-100 + br * 2 + b.spacingGap + 1, 300, 'depot').ok,
+      towerTooClose: game.canPlaceAt(-100 + br + b.towerRadius - 1, 300).reason,
+    };
+  });
+  check('tower spacing is unchanged at 26', footprints.towerTower === 26, `${footprints.towerTower}`);
+  check('two buildings need room for both footprints',
+    footprints.buildingBuilding === 42 && footprints.tooClose === 'too close to a building'
+    && footprints.farEnough, JSON.stringify(footprints));
+  check('a tower keeps clear of a building too',
+    footprints.towerTooClose === 'too close to a building', footprints.towerTooClose);
+
   // --- save / reload -----------------------------------------------------  // --- save / reload -----------------------------------------------------
   section('save and reload');
   const saved = await page.evaluate(() => {
@@ -970,8 +1050,9 @@ async function main() {
     game.state.credits = 4_000;
     game.buildBuilding(110, 120, 'depot');
     game.buildBuilding(LEVEL.oreNodes[2][0], LEVEL.oreNodes[2][1], 'miner');
-    game.buildBuilding(200, 120, 'ammofab');
+    game.buildBuilding(210, 120, 'ammofab');
     game.buildBuilding(-60, 250, 'plant');
+    game.buildBuilding(-60, 350, 'shellfab');
     game.state.selectedBuilding = game.state.buildings[1].id;
     game.advanceBy(20);
     ui.setTab('base');

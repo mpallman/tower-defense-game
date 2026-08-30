@@ -20,6 +20,9 @@ const migrations = {
   // Saves written before versioning existed are treated as version 0.
   0: (data) => ({
     ...data,
+    // The three upgrades that existed at version 0. Later ones are filled in
+    // by restore(), which reads the live table — a migration must describe the
+    // old data, not follow whatever BALANCE says today.
     upgrades: { damage: 0, rate: 0, range: 0, ...(data.upgrades || {}) },
     cores: data.cores || 0,
   }),

@@ -28,7 +28,7 @@ Tone: cold, clean, readable at a glance on a small screen.
 2. Towers fire automatically, spending a resource per shot. A tower with no
    supply line, or an empty pool, does not fire at all.
 3. Player spends currency on new towers, on the buildings that supply them,
-   and on upgrades (damage, range, rate).
+   and on upgrades (damage, range, rate, and the throughput of every building).
 4. Towers are placed freely anywhere off the path, by dragging them out of the
    build panel. No fixed slots. The arena is larger than the screen: one finger
    pans, two pinch to zoom, and a touch that goes nowhere is a tap.
@@ -36,6 +36,9 @@ Tone: cold, clean, readable at a glance on a small screen.
    factories turn ore into rounds and shells; power plants need no input. Stock
    is global, but a tower only draws from a building whose radius covers it, so
    layout is the puzzle. A run opens with one free, stocked depot by the vault.
+   Ore nodes are finite, so production scales through upgrades and prestige
+   rather than through more nodes — otherwise the economy is flat while the
+   waves grow exponentially, and the game hits a wall it can never pass.
 6. Every N waves a boss appears; failure resets to wave 1 keeping upgrades.
 7. Prestige converts lifetime earnings into a permanent multiplier and wipes
    the run.

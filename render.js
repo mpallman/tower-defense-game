@@ -173,7 +173,9 @@ export function createRenderer(canvas) {
         (b) => b.type === 'miner' && Math.hypot(b.x - x, b.y - y) <= BALANCE.economy.oreSnap);
       ctx.save();
       ctx.translate(x, y);
-      ctx.globalAlpha = mined ? 0.35 : 1;
+      // A worked node stays visible but recedes, so the map still reads as
+      // "this is where the ore is" once the miners are on top of them.
+      ctx.globalAlpha = mined ? 0.28 : 1;
       blit(ctx, oreArt);
       ctx.restore();
     }
@@ -203,7 +205,7 @@ export function createRenderer(canvas) {
         const pulse = 0.45 + Math.sin(state.time * 5) * 0.3;
         ctx.globalAlpha = building.rate <= 0 ? pulse : 0.5;
         ctx.beginPath();
-        ctx.arc(0, -BUILDING_R - 4, 2.4, 0, Math.PI * 2);
+        ctx.arc(0, -BUILDING_R - 5, 2.8, 0, Math.PI * 2);
         ctx.fillStyle = PALETTE.danger;
         ctx.fill();
         ctx.globalAlpha = 1;

@@ -8,11 +8,11 @@ first; nothing important lives only in a chat log.
 **Branch and deploy.** Work on `claude/create-claude-md-p5kzrk`. It is the
 repo's default branch and GitHub Pages deploys straight from it, so a push is a
 deploy — there is no PR, no merge, no staging. Bump `CACHE` in `sw.js` on every
-change (`vault-defense-v9` → `-v10`), or phones with the game installed keep
+change (`vault-defense-v10` → `-v11`), or phones with the game installed keep
 serving the old build from cache. After a deploy the phone needs two reloads:
 the first fetches, the second swaps the new cache in.
 
-**Tests.** `node test/run.mjs`. 118 checks, all passing as of the economy pass.
+**Tests.** `node test/run.mjs`. 127 checks, all passing as of the buildings pass.
 It boots the real page in headless Chromium, so it catches things unit tests
 would not. It needs no install: Playwright is installed globally in the dev
 container and the script resolves it via `npm root -g`, which keeps the repo at
@@ -115,6 +115,16 @@ each keep a separate save.
 - A tower's `starved` flag is recomputed every step whether or not it has
   something to shoot at, so the red ring shows while you are still laying the
   base out — that is when you need it.
+- Anything read off `BALANCE` and state must be *derived* from it, not mirrored
+  by hand. `freshRunState` builds the upgrade levels from `Object.keys`, because
+  hardcoding them meant adding one upgrade turned every derived number into NaN
+  with no error anywhere. A test now asserts no derived number is NaN.
+- Buildings are drawn in near-neutral steel with their colour only in edges and
+  lit windows, like the tower bases. A slab filled with the tint reads as a UI
+  chip dropped on the map and drowns out the towers and the wave.
+- Footprints: towers 12, buildings 20, and two things may not stand closer than
+  the sum of their radii plus `spacingGap`. Tower-to-tower still works out at
+  the 26 it has always been.
 - `game.js` is now a thin simulation loop over three pure modules: `derive.js`
   (numbers), `placement.js` (legal spots and building/selling) and
   `economy.js` (stock and supply). All three take `state` as an argument and
@@ -128,8 +138,6 @@ each keep a separate save.
 - Boss modifiers: shielded, splitting, speeds up when damaged.
 - Auto-pause when a boss wave starts, as an option.
 - A run summary on breach: what killed you, what your towers contributed.
-- Per-building upgrade or a second miner tier, if ore turns out to be the
-  bottleneck rather than credits.
 - Power as capacity rather than stock. Right now all four resources are the
   same stock-and-flow model, which keeps one mental model and one starvation
   rule; "each laser needs 1 power slot" would read more naturally but needs its
@@ -162,6 +170,12 @@ each keep a separate save.
   about how the game actually performs on a phone.
 
 ## Balance notes (for me to fill in after playing)
+
+The throughput upgrade is the one that decides whether the economy keeps up
+with the wave curve. Production scales at `1 + level * 0.20` times the prestige
+multiplier; waves scale at `1.155^wave`. Nobody has played far enough to know
+whether those two curves meet.
+
 
 Everything tunable is in `balance.js`. Nothing is tuned yet.
 
