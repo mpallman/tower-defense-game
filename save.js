@@ -3,7 +3,7 @@
 // Every stored save carries a schemaVersion. Loading an older save runs the
 // migrations in order; it never silently resets progress.
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 export const STORAGE_KEY = 'towerdefense.save';
 
 // The eleven fixed build slots that existed before free placement. Frozen on
@@ -28,15 +28,39 @@ const migrations = {
   }),
 
   // v2 -> v3: towers gained a running cost, so a save needs somewhere for
-  // buildings and stock to live. The opening depot is not added here — game.js
-  // seeds it after every restore, so there is one place that decides where it
-  // goes. The starting stock is added, or a migrated base would have a depot
-  // and nothing in it.
+  // buildings and stock to live. No depot is added here; the 3 -> 4 step below
+  // hands the run a free one to place, which is the same answer for a save
+  // that never had buildings and one that lost its way.
   2: (data) => ({
     ...data,
     buildings: Array.isArray(data.buildings) ? data.buildings : [],
     resources: { ore: 0, power: 0, ammo: 140, shells: 0, ...(data.resources || {}) },
   }),
+
+  // v3 -> v4: the opening stopped being placed for the player. There is no
+  // seeded depot any more; instead a run holds one free depot and one free
+  // turret to put wherever it likes.
+  //
+  // An existing save keeps everything it has — nothing is moved or deleted.
+  // It is granted a free build only for what it does not already own, which
+  // both leaves a going run alone and rescues one that got stuck with no
+  // depot and too little to buy one. Anything already standing that cost
+  // nothing (the old seeded depot, an older migration's depot) is marked free,
+  // so it stops inflating the price of the first depot actually bought.
+  3: (data) => {
+    const towers = Array.isArray(data.towers) ? data.towers : [];
+    const buildings = Array.isArray(data.buildings) ? data.buildings : [];
+    const has = (list, type) => list.some((it) => it.type === type);
+    return {
+      ...data,
+      towers: towers.map((t) => (t.spent ? t : { ...t, free: true })),
+      buildings: buildings.map((b) => (b.spent ? b : { ...b, free: true })),
+      freeBuilds: {
+        depot: has(buildings, 'depot') ? 0 : 1,
+        turret: has(towers, 'turret') ? 0 : 1,
+      },
+    };
+  },
 
   // v1 -> v2: towers moved from a slot index to free x/y coordinates.
   1: (data) => ({

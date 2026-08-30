@@ -66,16 +66,45 @@ export function canPlaceBuilding(state, x, y, type, ignoreId = null) {
 }
 
 // Costs rise with how many of that kind you already own.
+// How many free ones of this type the run still has in hand. The grant is a
+// run-scoped count, not a "have you built one yet" test, so selling the free
+// one gives it back and a run can never be left unable to replace it.
+export function freeLeft(state, type) {
+  const n = state.freeBuilds?.[type];
+  return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
+}
+
+// The cost curve counts what you have *paid* for. A free build must not push
+// the price of the next one up — being given something should not make the
+// thing after it more expensive.
+function paidCount(list, type) {
+  return list.filter((it) => it.type === type && !it.free).length;
+}
+
 export function towerCost(state, type) {
   const t = BALANCE.towers[type];
-  const owned = state.towers.filter((tw) => tw.type === type).length;
-  return Math.ceil(t.cost * Math.pow(t.costGrowth, owned));
+  if (freeLeft(state, type) > 0) return 0;
+  return Math.ceil(t.cost * Math.pow(t.costGrowth, paidCount(state.towers, type)));
 }
 
 export function buildingCost(state, type) {
   const def = BALANCE.buildings[type];
-  const owned = state.buildings.filter((b) => b.type === type).length;
-  return Math.ceil(def.cost * Math.pow(def.costGrowth, owned));
+  if (freeLeft(state, type) > 0) return 0;
+  return Math.ceil(def.cost * Math.pow(def.costGrowth, paidCount(state.buildings, type)));
+}
+
+// Spend a free grant, if one is in hand. Returns whether this build is free.
+function takeFree(state, type) {
+  if (freeLeft(state, type) <= 0) return false;
+  state.freeBuilds[type] = freeLeft(state, type) - 1;
+  return true;
+}
+
+// Hand a grant back when a free build is sold or otherwise removed.
+function returnFree(state, item) {
+  if (!item.free) return;
+  if (!state.freeBuilds) state.freeBuilds = {};
+  state.freeBuilds[item.type] = freeLeft(state, item.type) + 1;
 }
 
 export function buildTower(state, x, y, type) {
@@ -84,32 +113,35 @@ export function buildTower(state, x, y, type) {
   if (!spot.ok) return spot;
   const cost = towerCost(state, type);
   if (state.credits < cost) return { ok: false, reason: 'not enough credits' };
+  const free = takeFree(state, type);
   state.credits -= cost;
   const tower = {
-    id: state.nextId++, type, x, y, spent: cost,
+    id: state.nextId++, type, x, y, spent: cost, free,
     cooldown: 0, angle: -Math.PI / 2, recoil: 0, kills: 0, damageDone: 0, starved: false,
     beamHold: 0, beamPulse: 0, beamX: 0, beamY: 0,
   };
   state.towers.push(tower);
-  return { ok: true, cost, id: tower.id, tower };
+  return { ok: true, cost, free, id: tower.id, tower };
 }
 
-// `free` places one without charging, which is how the run's opening depot and
-// an older save's migration depot get put down.
-export function buildBuilding(state, x, y, type, { free = false } = {}) {
+// `gift` places one without charging or spending a grant. Nothing in the game
+// uses it now that the opening is player-placed; it stays because a migration
+// or a future reward may need to hand someone a building outright.
+export function buildBuilding(state, x, y, type, { free: gift = false } = {}) {
   const def = BALANCE.buildings[type];
   if (!def) return { ok: false, reason: 'unknown building' };
   const spot = canPlaceBuilding(state, x, y, type);
   if (!spot.ok) return spot;
-  const cost = free ? 0 : buildingCost(state, type);
+  const cost = gift ? 0 : buildingCost(state, type);
   if (state.credits < cost) return { ok: false, reason: 'not enough credits' };
+  const free = gift || takeFree(state, type);
   state.credits -= cost;
   // A miner snaps onto the node it was dropped near, so it always looks
   // planted on it rather than beside it.
   const at = spot.snapTo || { x, y };
-  const building = { id: state.nextId++, type, x: at.x, y: at.y, spent: cost, rate: 1 };
+  const building = { id: state.nextId++, type, x: at.x, y: at.y, spent: cost, free, rate: 1 };
   state.buildings.push(building);
-  return { ok: true, cost, id: building.id, building };
+  return { ok: true, cost, free, id: building.id, building };
 }
 
 export function sellTower(state, id) {
@@ -117,6 +149,7 @@ export function sellTower(state, id) {
   if (i < 0) return { ok: false, reason: 'no such tower' };
   const refund = Math.floor(state.towers[i].spent * BALANCE.economy.sellRefund);
   state.credits += refund;
+  returnFree(state, state.towers[i]);
   state.towers.splice(i, 1);
   if (state.selected === id) state.selected = null;
   return { ok: true, refund };
@@ -127,16 +160,8 @@ export function sellBuilding(state, id) {
   if (i < 0) return { ok: false, reason: 'no such building' };
   const refund = Math.floor(state.buildings[i].spent * BALANCE.economy.sellRefund);
   state.credits += refund;
+  returnFree(state, state.buildings[i]);
   state.buildings.splice(i, 1);
   if (state.selectedBuilding === id) state.selectedBuilding = null;
   return { ok: true, refund };
-}
-
-// Every fresh run opens with a stocked depot by the vault, because a turret
-// with no supply line does not fire and wave 1 arrives before you have built
-// anything.
-export function seedBase(state) {
-  if (state.buildings.length) return;
-  const [x, y] = BALANCE.economy.startingDepot;
-  state.buildings.push({ id: state.nextId++, type: 'depot', x, y, spent: 0, rate: 1 });
 }

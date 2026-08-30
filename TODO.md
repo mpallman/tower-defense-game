@@ -12,7 +12,7 @@ change (`vault-defense-v11` → `-v12`), or phones with the game installed keep
 serving the old build from cache. After a deploy the phone needs two reloads:
 the first fetches, the second swaps the new cache in.
 
-**Tests.** `node test/run.mjs`. 138 checks, all passing as of the opening fix.
+**Tests.** `node test/run.mjs`. 143 checks, all passing as of the free opening.
 It boots the real page in headless Chromium, so it catches things unit tests
 would not. It needs no install: Playwright is installed globally in the dev
 container and the script resolves it via `npm root -g`, which keeps the repo at
@@ -35,16 +35,25 @@ owner plays and reports; do not tune the curve speculatively between reports.
 
 **The opening was a trap, and the shape of it is worth remembering.** Supply
 lines made a tower useless unless some building reaches it, but nothing on
-screen said so until after you had paid. The free depot only covers the last
-stretch of path, so the natural first move — a turret up by the spawn — bought
-a tower that never fired: 0 kills in four minutes, no income, and not enough
-left to buy the depot that would have fixed it. Two changes: `startingCredits`
-now has to cover a turret plus a depot (note the free depot counts toward the
-cost curve, so your first *bought* depot is already the second, at 61 not 45),
-and dragging a tower now draws the ground that actually has supply for it and
-labels a dead spot in amber. Placing there is still allowed — the depot that
-feeds it may be your next move. A test holds the credit floor; if either cost
-moves, it fails rather than silently re-arming the trap.
+screen said so until after you had paid. A depot placed for you by the vault
+only covered the last stretch of path, so the natural first move — a turret up
+by the spawn — bought a tower that never fired: 0 kills in four minutes, no
+income, and not enough left to buy the depot that would have fixed it.
+
+It is now solved at the root rather than patched: nothing is placed for the
+player, and the first depot and first turret are free, wherever they want them
+(`BALANCE.economy.freeBuilds`). `startingCredits` went back to the 45 it was
+before the trap forced it up. Three rules hold it together, each with a test:
+
+- A free build does not count toward its cost curve, so the first depot you
+  *pay* for is priced as the first, not the second. Being given something must
+  not make the next one dearer.
+- Selling a free build hands the grant back, so a run can never strand itself
+  by selling the only thing feeding its guns.
+- Dragging a tower draws the ground that actually has supply for it and labels
+  a dead spot in amber, and the Build tab points a fresh run at the depot
+  first. Placing somewhere dead is still allowed — the depot that feeds it may
+  be the next thing you place.
 
 **The open design question**, raised from real play: waves are dead time when
 you have no money to spend. The 2×/4× speed button is a workaround, not a fix.
@@ -98,7 +107,7 @@ each keep a separate save.
 - The drag ghost's lift above the finger is applied in *screen* pixels by the
   input layer, not world units by `moveDrag` — a world-space lift vanishes
   under the thumb as you zoom out.
-- Saves carry `schemaVersion` (currently 3) and migrate in a chain: 0 → 1 → 2 → 3.
+- Saves carry `schemaVersion` (currently 4) and migrate in a chain: 0 → … → 4.
   Migrations must describe the *old* data — the 1 → 2 migration keeps its own
   frozen copy of the deleted slot table rather than importing the live level.
 - Restored towers are not re-validated against the placement rules. Tightening
@@ -209,9 +218,16 @@ each keep a separate save.
 ## Known issues
 
 - **Upgrading to supply lines idles some existing towers.** A save from before
-  this change gets the opening depot by the vault, so towers outside its 115
-  radius sit silent until a depot or factory is built near them. Nothing is
-  deleted and nothing is refunded — sell or re-place at will.
+  this change arrives with a free depot in hand and nothing on the map, so its
+  towers sit silent until that depot is placed near them. Nothing is deleted
+  and nothing is refunded — sell or re-place at will.
+- **A save already stuck under the old opening is not rescued.** The 3 -> 4
+  migration grants a free depot or turret only for what a save does not
+  already own, and a run that spent its money on a badly placed turret owns
+  both. It is not stuck-stuck — sell the turret for 18 and rebuild in the old
+  seeded depot's reach — but it is not handed a fresh grant either. Telling a
+  stuck run from a normal early one needs the level geometry, and a migration
+  has to describe the old data rather than follow the live level.
 
 - Loading a save always restarts at the top of the saved wave; mid-wave state
   is not persisted. Cheap for the player, simple for the code.

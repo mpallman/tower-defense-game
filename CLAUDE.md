@@ -36,7 +36,9 @@ Tone: cold, clean, readable at a glance on a small screen.
    factories turn ore *and power* into rounds and shells; power plants need no
    input. Lasers draw on the same power, so the base and the guns compete. Stock
    is global, but a tower only draws from a building whose radius covers it, so
-   layout is the puzzle. A run opens with one free, stocked depot by the vault.
+   layout is the puzzle. Nothing is placed for you: a run opens with an empty
+   map, stock already in hand, and the first depot and first turret free to put
+   wherever you like.
    Ore nodes are finite, so production scales through upgrades and prestige
    rather than through more nodes — otherwise the economy is flat while the
    waves grow exponentially, and the game hits a wall it can never pass.

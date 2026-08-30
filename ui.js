@@ -216,8 +216,12 @@ export function createUI({ game, audio, toast, makeDraggable }) {
     if (hint) wrap.append(el('span', 'micro', hint));
     bind(() => {
       const value = getCost();
-      setText(amount, formatNumber(value));
-      cost.classList.toggle('no', state.credits < value);
+      // A price of zero is a grant, not a bargain — say so in words. "0"
+      // beside a credit chip reads as broken.
+      const free = value <= 0;
+      setText(amount, free ? 'FREE' : formatNumber(value));
+      cost.classList.toggle('free', free);
+      cost.classList.toggle('no', !free && state.credits < value);
     });
     return wrap;
   }
@@ -540,11 +544,17 @@ export function createUI({ game, audio, toast, makeDraggable }) {
     bind(() => {
       const picked = state.selected != null ? game.towerById(state.selected) : null;
       const armedTower = state.buildType && !state.buildType.startsWith('building:');
+      // On a fresh run the map is empty, and a turret placed before any depot
+      // is a turret that never fires. Say so here rather than letting the
+      // player find out by spending their free one badly.
+      const noSupply = !state.buildings.length;
       setText(hint, picked
         ? 'Tap another tower to inspect it, or the map to deselect.'
         : armedTower
           ? `Now tap a free spot to place the ${BALANCE.towers[state.buildType].name}.`
-          : 'Drag a tower onto the map, or tap it and then tap a spot.');
+          : noSupply
+            ? 'Place your free depot from the Base tab first — towers only fire in its reach.'
+            : 'Drag a tower onto the map, or tap it and then tap a spot.');
     });
     frag.append(selectionCard());
     for (const key of Object.keys(BALANCE.towers)) frag.append(towerCard(key));

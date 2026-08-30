@@ -230,6 +230,10 @@
   .cost { display: inline-flex; align-items: center; gap: 4px; font-size: 14px; font-weight: 800; font-variant-numeric: tabular-nums; }
   .cost .glyph { width: 12px; height: 12px; color: var(--gold); }
   .cost.no, .cost.no .glyph { color: var(--bad); }
+  /* The run's one free depot and one free turret. Green, and the credit chip
+     hidden, because nothing is being spent. */
+  .cost.free, .cost.free .glyph { color: var(--good); }
+  .cost.free .glyph { display: none; }
   .micro { font-size: 9px; letter-spacing: .07em; text-transform: uppercase; color: var(--faint); }
 
   .selection { display: block; margin-bottom: 8px; }

@@ -23,19 +23,20 @@ export const BALANCE = {
   },
 
   economy: {
-    // Must cover a turret plus a depot, or the opening is a trap: the free
-    // depot only reaches the last stretch of path, so a first turret built
-    // anywhere else never fires, earns nothing, and leaves the run unable to
-    // afford the depot that would have fixed it — a measured 0 kills in four
-    // minutes. Note the depot is 61, not its listed 45: the free opening depot
-    // counts toward the cost curve, so your first *bought* one is already the
-    // second. A test holds this floor; raise it if either cost moves.
-    startingCredits: 95,
+    startingCredits: 45,
     sellRefund: 0.6,     // fraction of money spent returned when selling a tower
-    // The start has to be playable before you have built anything, so the run
-    // opens with a depot by the vault and rounds already in it.
+    // The opening. A run needs a supplying building *and* a gun before it can
+    // kill anything, and charging for both meant the first move could bankrupt
+    // the run: a turret out of every depot's reach never fires, earns nothing,
+    // and leaves too little to buy the depot that would have fixed it —
+    // 0 kills in four minutes, measured. So the first of each is free and the
+    // player chooses where both go. Nothing is placed for you.
+    //
+    // A free build does not count toward its cost curve, so the first one you
+    // *pay* for is priced as the first. Selling a free build hands the grant
+    // back, so you can never end up unable to replace it.
+    freeBuilds: { depot: 1, turret: 1 },
     startingStock: { ore: 0, power: 0, ammo: 140, shells: 0 },
-    startingDepot: [252, 470],   // world coords, near the vault and off the path
     oreSnap: 24,                 // how close a miner must sit to a node's centre
     buildingRadius: 20,          // footprint, as towers have towerRadius
   },

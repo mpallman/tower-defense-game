@@ -123,6 +123,9 @@ function freshRunState() {
     upgrades: Object.fromEntries(Object.keys(BALANCE.upgrades).map((key) => [key, 0])),
     towers: [],
     buildings: [],
+    // The opening is placed by the player, not for them: one depot and one
+    // turret on the house, wherever they want them.
+    freeBuilds: { ...BALANCE.economy.freeBuilds },
     resources: freshResources(),
   };
 }
@@ -545,8 +548,6 @@ export function createGame(options = {}) {
   api.canPlaceBuildingAt = (x, y, type, ignoreId = null) => Place.canPlaceBuilding(state, x, y, type, ignoreId);
   api.sellTower = (id) => Place.sellTower(state, id);
   api.sellBuilding = (id) => Place.sellBuilding(state, id);
-  const seedBase = () => Place.seedBase(state);
-  api.seedBase = seedBase;
   const buildingCost = (type) => Place.buildingCost(state, type);
 
   api.buildTower = function buildTower(x, y, type) {
@@ -708,7 +709,6 @@ export function createGame(options = {}) {
     state.incomeAccum = 0;
     state.incomeTimer = 0;
     state.selectedBuilding = null;
-    seedBase();
     api.onEvent({ type: 'prestige', cores });
     return { ok: true, cores };
   };
@@ -720,8 +720,9 @@ export function createGame(options = {}) {
       credits: state.credits,
       vaultHp: state.vaultHp,
       upgrades: { ...state.upgrades },
-      towers: state.towers.map((t) => ({ x: t.x, y: t.y, type: t.type, spent: t.spent, kills: t.kills })),
-      buildings: state.buildings.map((b) => ({ x: b.x, y: b.y, type: b.type, spent: b.spent })),
+      towers: state.towers.map((t) => ({ x: t.x, y: t.y, type: t.type, spent: t.spent, kills: t.kills, free: !!t.free })),
+      buildings: state.buildings.map((b) => ({ x: b.x, y: b.y, type: b.type, spent: b.spent, free: !!b.free })),
+      freeBuilds: { ...state.freeBuilds },
       resources: { ...state.resources },
       cores: state.cores,
       prestiges: state.prestiges,
@@ -754,7 +755,7 @@ export function createGame(options = {}) {
       // makes an old position illegal, keeping the tower beats deleting it.
       state.towers.push({
         id: state.nextId++, type: t.type, x: t.x, y: t.y,
-        spent: num(t.spent, BALANCE.towers[t.type].cost),
+        spent: num(t.spent, BALANCE.towers[t.type].cost), free: !!t.free,
         cooldown: 0, angle: -Math.PI / 2, recoil: 0, kills: num(t.kills, 0), damageDone: 0,
         beamHold: 0, beamPulse: 0, beamX: 0, beamY: 0,
       });
@@ -767,8 +768,14 @@ export function createGame(options = {}) {
       // change must not delete what someone built.
       state.buildings.push({
         id: state.nextId++, type: b.type, x: b.x, y: b.y,
-        spent: num(b.spent, BALANCE.buildings[b.type].cost), rate: 1,
+        spent: num(b.spent, BALANCE.buildings[b.type].cost), free: !!b.free, rate: 1,
       });
+    }
+    // Grants are restored per type, never invented: a save that has already
+    // spent its free depot must not get another one on reload.
+    state.freeBuilds = {};
+    for (const key of Object.keys(BALANCE.economy.freeBuilds)) {
+      state.freeBuilds[key] = Math.max(0, Math.floor(num(data.freeBuilds?.[key], 0)));
     }
     state.resources = freshResources();
     for (const key of RESOURCE_KEYS) {
@@ -826,9 +833,6 @@ export function createGame(options = {}) {
     const loaded = Save.loadGame();
     if (!loaded) return { loaded: false };
     restore(loaded.data);
-    // A save written before supply lines existed restores with no buildings at
-    // all. Rather than leaving every tower silent, it gets the opening depot.
-    seedBase();
     let offline = null;
     if (loaded.savedAt) {
       offline = applyOffline(Math.max(0, (clock.now() - loaded.savedAt) / 1000));
@@ -841,7 +845,6 @@ export function createGame(options = {}) {
     Object.assign(state, freshState());
     rng = mulberry32(state.seed);
     lastTickWall = null;
-    seedBase();
   };
 
   // --- read-only helpers for the UI --------------------------------------
@@ -852,8 +855,7 @@ export function createGame(options = {}) {
   api.prestigeMult = prestigeMult;
   api.pendingCores = pendingCores;
   api.isBossWave = isBossWave;
-  // A brand new game never goes through load(), so it seeds here.
-  seedBase();
+  api.freeLeft = (type) => Place.freeLeft(state, type);
 
   api.waveHp = waveHp;
   api.waveRoster = waveRoster;

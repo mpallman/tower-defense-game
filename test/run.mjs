@@ -494,42 +494,65 @@ async function main() {
   await page.evaluate(() => { globalThis.__td.game.hardReset(); globalThis.__td.renderPanel(); });
 
   // --- the opening -----------------------------------------------------
-  // A new run has to be able to arm itself anywhere on the map. It could not:
-  // the free depot only reaches the last stretch of path, so a first turret
-  // built anywhere else never fired, earned nothing, and left the run with too
-  // little to buy the depot that would have fixed it. Zero kills in four
-  // minutes, measured. These checks are the guard on that never returning.
+  // Nothing is placed for the player. A run holds one free depot and one free
+  // turret, and the player decides where both go. The rule these checks guard
+  // is that a brand new run can always arm itself, anywhere, without spending
+  // a credit — the old opening could not, and a turret bought out of reach of
+  // the one pre-placed depot killed the run outright.
   section('the opening');
   const firstRun = await page.evaluate(() => {
-    const { game, BALANCE } = globalThis.__td;
+    const { game } = globalThis.__td;
     game.hardReset();
-    const credits = game.state.credits;
-    const turret = game.towerCost('turret');
-    const depot = game.buildingCost('depot');
+    const opening = {
+      buildings: game.state.buildings.length,
+      towers: game.state.towers.length,
+      credits: game.state.credits,
+      depotCost: game.buildingCost('depot'),
+      turretCost: game.towerCost('turret'),
+    };
 
-    // Drag a turret to a spot with no supply, then to one with supply.
-    game.startDrag('turret');
-    const dead = { ...game.moveDrag(60, 110) };
-    const live = { ...game.moveDrag(228, 420) };
-    game.cancelDrag();
+    // Place both, far from where the old seeded depot used to sit, and spend
+    // nothing doing it.
+    const depot = game.buildBuilding(20, 130, 'depot');
+    const turret = game.buildTower(120, 112, 'turret');
+    const placed = {
+      depotFree: depot.ok && depot.cost === 0 && depot.free === true,
+      turretFree: turret.ok && turret.cost === 0 && turret.free === true,
+      creditsUnspent: game.state.credits,
+      nextDepot: game.buildingCost('depot'),
+      nextTurret: game.towerCost('turret'),
+    };
 
-    // And play the trap out: buy the dead spot, wait, see if anything happens.
+    // And it works: the turret is supplied and kills things.
+    game.state.phase = 'wave';
+    for (let i = 0; i < 60 && !game.state.enemies.length; i++) game.advanceBy(0.5);
+    game.advanceBy(30);
+    const fought = { kills: game.state.kills, starved: !!game.towerById(turret.id).starved };
+
+    // Selling a free build hands the grant back, so a run can never strand
+    // itself by selling the only thing feeding its guns.
     game.hardReset();
-    game.state.credits = turret;          // exactly one turret, badly placed
-    game.buildTower(60, 110, 'turret');
-    game.advanceBy(240);
-    const trapped = { kills: game.state.kills, credits: Math.round(game.state.credits) };
-    return { credits, turret, depot, dead, live, trapped };
+    const d = game.buildBuilding(20, 130, 'depot');
+    game.sellBuilding(d.id);
+    const resold = { cost: game.buildingCost('depot'), left: game.freeLeft('depot') };
+    return { opening, placed, fought, resold };
   });
-  check('a new run can afford a turret and a depot',
-    firstRun.credits >= firstRun.turret + firstRun.depot,
-    `${firstRun.credits} credits vs ${firstRun.turret} + ${firstRun.depot}`);
-  check('the drag warns that a spot has no supply line',
-    firstRun.dead.ok === true && firstRun.dead.supplied === false, JSON.stringify(firstRun.dead.supplied));
-  check('the drag stays quiet where supply reaches',
-    firstRun.live.ok === true && firstRun.live.supplied === true, JSON.stringify(firstRun.live.supplied));
-  check('an unsupplied turret really does earn nothing, which is why the warning exists',
-    firstRun.trapped.kills === 0, `${firstRun.trapped.kills} kills, ${firstRun.trapped.credits} credits`);
+  check('a run opens with an empty map', firstRun.opening.buildings === 0 && firstRun.opening.towers === 0,
+    JSON.stringify(firstRun.opening));
+  check('the first depot and the first turret cost nothing',
+    firstRun.opening.depotCost === 0 && firstRun.opening.turretCost === 0,
+    JSON.stringify(firstRun.opening));
+  check('placing both spends no credits',
+    firstRun.placed.depotFree && firstRun.placed.turretFree
+      && firstRun.placed.creditsUnspent === firstRun.opening.credits,
+    JSON.stringify(firstRun.placed));
+  check('a free build does not push the next one up the cost curve',
+    firstRun.placed.nextDepot === 45 && firstRun.placed.nextTurret === 30,
+    `depot ${firstRun.placed.nextDepot}, turret ${firstRun.placed.nextTurret}`);
+  check('the opening the player laid out actually fights',
+    firstRun.fought.kills > 0 && !firstRun.fought.starved, JSON.stringify(firstRun.fought));
+  check('selling a free build gives the grant back',
+    firstRun.resold.left === 1 && firstRun.resold.cost === 0, JSON.stringify(firstRun.resold));
 
   // --- the ground layer ------------------------------------------------
   // The floor is baked at a quantised resolution but must be *drawn* at the
@@ -729,40 +752,45 @@ async function main() {
   const firstRunBase = await page.evaluate(() => {
     const { game, BALANCE } = globalThis.__td;
     game.hardReset();
-    const depots = game.state.buildings.filter((b) => b.type === 'depot');
+    // The free depot arrives stocked, so the first turret dropped in its reach
+    // fires immediately rather than waiting on a factory that does not exist.
+    const depot = game.buildBuilding(252, 470, 'depot');
     const near = game.buildTower(210, 430, 'turret');
     game.state.phase = 'wave';
     game.state.queue = ['grunt'];
     for (let i = 0; i < 40 && !game.state.enemies.length; i++) game.advanceBy(0.5);
     game.advanceBy(6);
     return {
-      depots: depots.length,
-      free: depots.every((d) => d.spent === 0),
+      free: depot.ok && depot.cost === 0,
       ammo: BALANCE.economy.startingStock.ammo,
       firing: near.ok && !game.towerById(near.id).starved,
     };
   });
-  check('a run opens with one free, stocked depot',
-    firstRunBase.depots === 1 && firstRunBase.free && firstRunBase.ammo > 0, JSON.stringify(firstRunBase));
-  check('a turret built by the vault fires straight away', firstRunBase.firing);
+  check('the free depot arrives with stock already in it',
+    firstRunBase.free && firstRunBase.ammo > 0, JSON.stringify(firstRunBase));
+  check('a turret in its reach fires straight away', firstRunBase.firing);
 
   const afterPrestige = await page.evaluate(() => {
     const { game } = globalThis.__td;
     game.hardReset();
     game.state.credits = 50_000;
     game.buildBuilding(-100, 380, 'plant');
+    game.buildBuilding(20, 130, 'depot');       // spends the free grant
     game.state.runEarned = 10_000_000;
     const res = game.prestige();
     return {
       ok: res.ok,
       buildings: game.state.buildings.map((b) => b.type),
       ammo: game.state.resources.ammo,
+      freeDepot: game.freeLeft('depot'),
+      freeTurret: game.freeLeft('turret'),
     };
   });
-  check('prestige wipes the base but leaves the opening depot',
-    afterPrestige.ok && afterPrestige.buildings.length === 1
-    && afterPrestige.buildings[0] === 'depot' && afterPrestige.ammo > 0,
-    JSON.stringify(afterPrestige));
+  check('prestige wipes the base back to an empty map',
+    afterPrestige.ok && afterPrestige.buildings.length === 0, JSON.stringify(afterPrestige));
+  check('prestige hands the free depot and turret back',
+    afterPrestige.freeDepot === 1 && afterPrestige.freeTurret === 1, JSON.stringify(afterPrestige));
+  check('prestige leaves the opening stock alone', afterPrestige.ammo > 0, `${afterPrestige.ammo} ammo`);
 
   // The ore nodes are finite, so production has to scale with investment or the
   // economy is flat while the waves grow exponentially.
@@ -943,9 +971,13 @@ async function main() {
   check('slot-based towers become free-placed coordinates',
     migrated.towers[0].x === 30 && migrated.towers[0].y === 120 && migrated.towers[0].slot === undefined,
     JSON.stringify(migrated.towers[0]));
-  check('a save from before supply lines arrives with a stocked depot',
-    migrated.buildings.length === 1 && migrated.buildings[0].type === 'depot' && migrated.resources.ammo > 0,
-    JSON.stringify({ buildings: migrated.buildings, ammo: migrated.resources.ammo }));
+  // Nothing is placed for a migrated save either. It arrives with stock and a
+  // free depot in hand, which is the same answer for a save that never had
+  // buildings and one that spent everything and got stuck without one.
+  check('a save from before supply lines arrives with stock and a free depot to place',
+    migrated.buildings.length === 0 && migrated.resources.ammo > 0
+    && migrated.freeBuilds.depot === 1,
+    JSON.stringify({ buildings: migrated.buildings, ammo: migrated.resources.ammo, free: migrated.freeBuilds }));
 
   // A v2 save — towers placed freely, but no buildings and no stock.
   await page.evaluate(() => {
@@ -970,15 +1002,25 @@ async function main() {
       towers: snap.towers.length, kills: snap.towers[0].kills,
       buildings: snap.buildings.map((b) => b.type),
       ammo: snap.resources.ammo,
-      // the migrated tower sits by the vault, so the opening depot reaches it
+      free: snap.freeBuilds,
+      // The migrated turret was bought, so no turret grant — but the run has
+      // no depot, so it gets one to place, and its tower is silent until the
+      // player puts that depot somewhere.
       supplied: game.towerProblem(game.state.towers[0]) === null,
+      suppliedOnceDepotPlaced: (() => {
+        const d = game.buildBuilding(252, 470, 'depot');
+        return d.ok && d.cost === 0 && game.towerProblem(game.state.towers[0]) === null;
+      })(),
     };
   });
   check('a v2 save keeps its run intact',
     fromV2.wave === 9 && fromV2.cores === 3 && fromV2.upgrades.damage === 2
     && fromV2.towers === 1 && fromV2.kills === 12, JSON.stringify(fromV2));
-  check('a v2 save gains a depot and stock rather than silent towers',
-    fromV2.buildings.length === 1 && fromV2.ammo > 0 && fromV2.supplied, JSON.stringify(fromV2));
+  check('a v2 save gains stock and a free depot, and keeps its own towers',
+    fromV2.buildings.length === 0 && fromV2.ammo > 0
+    && fromV2.free.depot === 1 && fromV2.free.turret === 0, JSON.stringify(fromV2));
+  check('placing that free depot brings the migrated tower back to life',
+    fromV2.supplied === false && fromV2.suppliedOnceDepotPlaced === true, JSON.stringify(fromV2));
 
   const corrupt = await page.evaluate(async () => {
     localStorage.setItem('towerdefense.save', '{not json');
