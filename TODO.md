@@ -12,7 +12,7 @@ change (`vault-defense-v11` → `-v12`), or phones with the game installed keep
 serving the old build from cache. After a deploy the phone needs two reloads:
 the first fetches, the second swaps the new cache in.
 
-**Tests.** `node test/run.mjs`. 133 checks, all passing as of the art pass.
+**Tests.** `node test/run.mjs`. 138 checks, all passing as of the opening fix.
 It boots the real page in headless Chromium, so it catches things unit tests
 would not. It needs no install: Playwright is installed globally in the dev
 container and the script resolves it via `npm root -g`, which keeps the repo at
@@ -32,6 +32,19 @@ default-looking thing left, and worth a look next.
 
 **Nothing is balanced.** Every number in `balance.js` is a first guess. The
 owner plays and reports; do not tune the curve speculatively between reports.
+
+**The opening was a trap, and the shape of it is worth remembering.** Supply
+lines made a tower useless unless some building reaches it, but nothing on
+screen said so until after you had paid. The free depot only covers the last
+stretch of path, so the natural first move — a turret up by the spawn — bought
+a tower that never fired: 0 kills in four minutes, no income, and not enough
+left to buy the depot that would have fixed it. Two changes: `startingCredits`
+now has to cover a turret plus a depot (note the free depot counts toward the
+cost curve, so your first *bought* depot is already the second, at 61 not 45),
+and dragging a tower now draws the ground that actually has supply for it and
+labels a dead spot in amber. Placing there is still allowed — the depot that
+feeds it may be your next move. A test holds the credit floor; if either cost
+moves, it fails rather than silently re-arming the trap.
 
 **The open design question**, raised from real play: waves are dead time when
 you have no money to spend. The 2×/4× speed button is a workaround, not a fix.
@@ -151,6 +164,13 @@ each keep a separate save.
   by hand. `freshRunState` builds the upgrade levels from `Object.keys`, because
   hardcoding them meant adding one upgrade turned every derived number into NaN
   with no error anywhere. A test now asserts no derived number is NaN.
+- The floor is baked at a *quantised* resolution but drawn at the exact one.
+  Getting that wrong is what made the background appear to slide when you
+  zoomed: stamping the tile at its baked size meant the floor scaled in
+  quarter-pixel steps while everything standing on it scaled continuously, and
+  the error accumulated across the screen — a quarter of a tile adrift at
+  minimum zoom. `tileLayout()` is pure and exported so a test can assert the
+  invariant directly: tile seams land on world multiples of 100 at every zoom.
 - The floor (`ground.js`) is one seamlessly tiling square — plating, seams,
   cable runs, wear, grain — baked per zoom level and stamped tile by tile with
   `drawImage`. Two dead ends are recorded here so they are not retried: a

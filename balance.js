@@ -23,7 +23,14 @@ export const BALANCE = {
   },
 
   economy: {
-    startingCredits: 45,
+    // Must cover a turret plus a depot, or the opening is a trap: the free
+    // depot only reaches the last stretch of path, so a first turret built
+    // anywhere else never fires, earns nothing, and leaves the run unable to
+    // afford the depot that would have fixed it — a measured 0 kills in four
+    // minutes. Note the depot is 61, not its listed 45: the free opening depot
+    // counts toward the cost curve, so your first *bought* one is already the
+    // second. A test holds this floor; raise it if either cost moves.
+    startingCredits: 95,
     sellRefund: 0.6,     // fraction of money spent returned when selling a tower
     // The start has to be playable before you have built anything, so the run
     // opens with a depot by the vault and rounds already in it.

@@ -5,7 +5,7 @@
 // sense that the towers were standing *on* anything.
 //
 // So the floor is baked into a single seamlessly tiling square and stamped
-// with one unscaled fillRect. That is both faster than the old per-line loop
+// once per visible tile. That is both faster than the old per-line loop
 // and buys as much detail as we care to draw, since the cost is paid once per
 // zoom level: plating, seams, cable runs, wear. On top of the tile go two
 // things that must not tile, because they are lighting rather than surface —
@@ -160,12 +160,35 @@ function bakeTile(pxPerUnit) {
   return canvas;
 }
 
+// Where the floor tiles land this frame, in device pixels. Pure, and exported
+// so a test can assert the one invariant that matters: the floor is pinned to
+// the world, not to the screen.
+//
+// `step` is deliberately fractional. Baking is quantised so a pinch does not
+// re-bake every frame, but *drawing* at the baked size instead of the true
+// size was the bug: the floor then scaled in quarter-pixel steps while the
+// towers on it scaled continuously, so the ground slid under everything as
+// you zoomed. It read as a parallax layer. Bake coarse, draw exact.
+export function tileLayout(frame) {
+  const { camera, scale, dpr, cssW, cssH } = frame;
+  const step = TILE * scale * dpr;
+  // Where world (0,0) lands on the canvas, wrapped back one tile so the first
+  // stamp starts off the top-left corner and the grid stays world-aligned.
+  const originX = (cssW / 2 - camera.x * scale) * dpr;
+  const originY = (cssH / 2 - camera.y * scale) * dpr;
+  return {
+    step,
+    ox: ((originX % step) + step) % step - step,
+    oy: ((originY % step) + step) % step - step,
+  };
+}
+
 export function createGround(ctx) {
   let tile = null, bakedAt = 0;
 
-  // Zoom is continuous, so the resolution is quantised: a pinch re-bakes a few
-  // times rather than on every frame, and a tile bake is a fraction of a
-  // millisecond anyway.
+  // Zoom is continuous, so the *baked* resolution is quantised: a pinch
+  // re-bakes a few times rather than on every frame, and the tile is then
+  // resampled by at most a few percent when it is drawn.
   function ensureTile(pxPerUnit) {
     const q = Math.max(0.5, Math.round(pxPerUnit * 4) / 4);
     if (q === bakedAt && tile) return;
@@ -173,27 +196,27 @@ export function createGround(ctx) {
     tile = bakeTile(q);
   }
 
-  // The floor. Drawn in device pixels with the tile at its baked size, so no
-  // pixel of it is ever resampled. `frame` carries what that needs from the
-  // camera.
+  // The floor, stamped tile by tile in device pixels. `frame` carries what
+  // that needs from the camera.
   function paint(frame) {
-    const { camera, scale, dpr, cssW, cssH, canvasW, canvasH } = frame;
+    const { scale, dpr, canvasW, canvasH } = frame;
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = PALETTE.bg;
     ctx.fillRect(0, 0, canvasW, canvasH);
     ensureTile(scale * dpr);
     if (tile) {
-      const px = tile.width;
-      // Where world (0,0) lands on the canvas, wrapped into one tile, so the
-      // floor stays pinned to the world while the camera moves over it.
-      const ox = (((cssW / 2 - camera.x * scale) * dpr) % px + px) % px - px;
-      const oy = (((cssH / 2 - camera.y * scale) * dpr) % px + px) % px - px;
-      // Stamped tile by tile rather than filled with a CanvasPattern: a 1:1
-      // drawImage is the rasteriser's fast path, and twenty of them beat one
-      // pattern fill over the same pixels by a wide margin.
-      for (let y = oy; y < canvasH; y += px) {
-        for (let x = ox; x < canvasW; x += px) ctx.drawImage(tile, x, y);
+      const { step, ox, oy } = tileLayout(frame);
+      // Stamped rather than filled with a CanvasPattern: drawImage is the
+      // rasteriser's fast path, and twenty of them beat one pattern fill over
+      // the same pixels by a wide margin. Each is drawn a device pixel over
+      // its step, which closes the hairline seam a fractional step leaves —
+      // every tile stretches by the same amount, so lines still meet across
+      // the join.
+      for (let y = oy; y < canvasH; y += step) {
+        for (let x = ox; x < canvasW; x += step) {
+          ctx.drawImage(tile, x, y, step + 1, step + 1);
+        }
       }
     }
     ctx.restore();

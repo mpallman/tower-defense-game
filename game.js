@@ -632,6 +632,12 @@ export function createGame(options = {}) {
   // Takes the ghost's own position. The lift above the finger is applied by the
   // input layer, in screen pixels, because a world-space lift would shrink to
   // nothing under the thumb as you zoom out.
+  // Would a tower of this type have a supply line if it stood here?
+  function towerSuppliedAt(type, x, y) {
+    const need = BALANCE.towers[type]?.ammoType;
+    return !need || suppliedAt(state, x, y).has(need);
+  }
+
   api.moveDrag = function moveDrag(x, gy) {
     if (!state.drag) return null;
     const building = state.drag.kind === 'building';
@@ -647,6 +653,11 @@ export function createGame(options = {}) {
       snapY: spot.snapTo ? spot.snapTo.y : gy,
       ok: spot.ok && affordable,
       reason: spot.ok ? (affordable ? '' : 'not enough credits') : spot.reason,
+      // Legal is not the same as useful. A tower dropped outside every supply
+      // radius is silent forever, and finding that out after paying for it is
+      // how an opening run dies. Warn, but still allow it — the depot that
+      // feeds it may be the next thing you build.
+      supplied: building || towerSuppliedAt(state.drag.type, x, gy),
     });
     return state.drag;
   };

@@ -493,6 +493,70 @@ async function main() {
 
   await page.evaluate(() => { globalThis.__td.game.hardReset(); globalThis.__td.renderPanel(); });
 
+  // --- the opening -----------------------------------------------------
+  // A new run has to be able to arm itself anywhere on the map. It could not:
+  // the free depot only reaches the last stretch of path, so a first turret
+  // built anywhere else never fired, earned nothing, and left the run with too
+  // little to buy the depot that would have fixed it. Zero kills in four
+  // minutes, measured. These checks are the guard on that never returning.
+  section('the opening');
+  const firstRun = await page.evaluate(() => {
+    const { game, BALANCE } = globalThis.__td;
+    game.hardReset();
+    const credits = game.state.credits;
+    const turret = game.towerCost('turret');
+    const depot = game.buildingCost('depot');
+
+    // Drag a turret to a spot with no supply, then to one with supply.
+    game.startDrag('turret');
+    const dead = { ...game.moveDrag(60, 110) };
+    const live = { ...game.moveDrag(228, 420) };
+    game.cancelDrag();
+
+    // And play the trap out: buy the dead spot, wait, see if anything happens.
+    game.hardReset();
+    game.state.credits = turret;          // exactly one turret, badly placed
+    game.buildTower(60, 110, 'turret');
+    game.advanceBy(240);
+    const trapped = { kills: game.state.kills, credits: Math.round(game.state.credits) };
+    return { credits, turret, depot, dead, live, trapped };
+  });
+  check('a new run can afford a turret and a depot',
+    firstRun.credits >= firstRun.turret + firstRun.depot,
+    `${firstRun.credits} credits vs ${firstRun.turret} + ${firstRun.depot}`);
+  check('the drag warns that a spot has no supply line',
+    firstRun.dead.ok === true && firstRun.dead.supplied === false, JSON.stringify(firstRun.dead.supplied));
+  check('the drag stays quiet where supply reaches',
+    firstRun.live.ok === true && firstRun.live.supplied === true, JSON.stringify(firstRun.live.supplied));
+  check('an unsupplied turret really does earn nothing, which is why the warning exists',
+    firstRun.trapped.kills === 0, `${firstRun.trapped.kills} kills, ${firstRun.trapped.credits} credits`);
+
+  // --- the ground layer ------------------------------------------------
+  // The floor is baked at a quantised resolution but must be *drawn* at the
+  // exact one, or it scales in steps while the towers on it scale smoothly and
+  // the whole background appears to slide as you zoom. The invariant: tile
+  // seams always land on world multiples of the tile size, at every zoom.
+  section('ground');
+  const groundLock = await page.evaluate(async () => {
+    const { renderer } = globalThis.__td;
+    const { tileLayout } = await import('./ground.js');
+    const worst = [];
+    for (const zoom of [0.42, 0.63, 0.87, 1, 1.19, 1.66, 2.4]) {
+      renderer.zoomAt(zoom / renderer.camera.zoom, 100, 100);
+      const frame = renderer.frame();
+      const { step, ox } = tileLayout(frame);
+      // The world coordinate the first tile seam sits on.
+      const world = frame.camera.x + (ox / frame.dpr - frame.cssW / 2) / frame.scale;
+      const offBy = Math.abs(world / 100 - Math.round(world / 100)) * 100;
+      worst.push({ zoom: +renderer.camera.zoom.toFixed(2), offBy: +offBy.toFixed(4), step: +step.toFixed(3) });
+    }
+    renderer.recentre();
+    return worst;
+  });
+  check('the floor stays locked to the world at every zoom',
+    groundLock.every((r) => r.offBy < 0.01),
+    groundLock.map((r) => `${r.zoom}x off by ${r.offBy}`).join(', '));
+
   // --- economy -------------------------------------------------------------
   section('economy');
   const supply = await page.evaluate(() => {
@@ -662,7 +726,7 @@ async function main() {
   check('stock stops at its cap', stockCap.power === stockCap.cap,
     `${stockCap.power} vs ${stockCap.cap}`);
 
-  const openingBase = await page.evaluate(() => {
+  const firstRunBase = await page.evaluate(() => {
     const { game, BALANCE } = globalThis.__td;
     game.hardReset();
     const depots = game.state.buildings.filter((b) => b.type === 'depot');
@@ -679,8 +743,8 @@ async function main() {
     };
   });
   check('a run opens with one free, stocked depot',
-    openingBase.depots === 1 && openingBase.free && openingBase.ammo > 0, JSON.stringify(openingBase));
-  check('a turret built by the vault fires straight away', openingBase.firing);
+    firstRunBase.depots === 1 && firstRunBase.free && firstRunBase.ammo > 0, JSON.stringify(firstRunBase));
+  check('a turret built by the vault fires straight away', firstRunBase.firing);
 
   const afterPrestige = await page.evaluate(() => {
     const { game } = globalThis.__td;

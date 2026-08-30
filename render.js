@@ -124,11 +124,18 @@ export function createRenderer(canvas) {
   // Drawn across the whole visible area so letterboxing never shows as bars.
   // The floor itself is one baked tile (ground.js); the lighting on top of it
   // is not tiled, because it has to stay put relative to the vault.
-  function drawBackground(time) {
-    const frame = {
+  // Everything ground.js needs to know about where the camera is pointing.
+  // Exposed on the renderer so a test can assert the floor stays locked to the
+  // world without reaching into private state.
+  function frameInfo() {
+    return {
       camera, scale, dpr, cssW, cssH,
       canvasW: canvas.width, canvasH: canvas.height,
     };
+  }
+
+  function drawBackground(time) {
+    const frame = frameInfo();
     ground.paint(frame);
     ground.light(frame, time, { x: LEVEL.vault[0], y: LEVEL.vault[1] });
   }
@@ -532,7 +539,8 @@ export function createRenderer(canvas) {
     const reach = building ? def.radius : game.towerStats({ type: drag.type }).range;
     const gx = building && Number.isFinite(drag.snapX) ? drag.snapX : drag.x;
     const gy = building && Number.isFinite(drag.snapY) ? drag.snapY : drag.y;
-    const tint = drag.ok ? 'rgba(74,222,128,' : 'rgba(244,63,94,';
+    const tint = !drag.ok ? 'rgba(244,63,94,'
+      : drag.supplied === false ? 'rgba(251,191,36,' : 'rgba(74,222,128,';
 
     ctx.beginPath();
     ctx.arc(gx, gy, reach, 0, Math.PI * 2);
@@ -562,6 +570,28 @@ export function createRenderer(canvas) {
     ctx.lineWidth = 1.6;
     ctx.stroke();
 
+    // While placing a tower, show the ground that actually has a supply line
+    // for it. Without this the only way to learn a spot is dead is to pay for
+    // it, watch the tower never fire, and be left unable to afford the depot
+    // that would have fed it.
+    if (!building && def.ammoType) {
+      ctx.save();
+      for (const b of game.state.buildings) {
+        const bdef = BALANCE.buildings[b.type];
+        if (!bdef.supplies || !bdef.supplies.includes(def.ammoType)) continue;
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, bdef.radius, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(56,189,248,0.05)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(56,189,248,0.35)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([5, 6]);
+        ctx.stroke();
+      }
+      ctx.restore();
+      ctx.setLineDash([]);
+    }
+
     // While placing a miner, show which nodes are still free.
     if (building && def.needsOre) {
       for (const [nx, ny] of LEVEL.oreNodes) {
@@ -577,7 +607,10 @@ export function createRenderer(canvas) {
       }
     }
 
-    const label = drag.ok ? def.name : drag.reason;
+    // A legal but unsupplied spot is a warning, not a refusal: the building
+    // that feeds it may be the very next thing you place.
+    const unsupplied = drag.ok && drag.supplied === false;
+    const label = !drag.ok ? drag.reason : unsupplied ? 'no supply line here' : def.name;
     if (label) {
       ctx.font = '700 11px system-ui, sans-serif';
       ctx.textAlign = 'center';
@@ -586,7 +619,7 @@ export function createRenderer(canvas) {
       const ly = gy - b.towerRadius - 6;
       ctx.fillStyle = 'rgba(7,11,18,0.85)';
       ctx.fillRect(gx - w / 2, ly - 14, w, 15);
-      ctx.fillStyle = drag.ok ? '#4ade80' : '#fca5a5';
+      ctx.fillStyle = !drag.ok ? '#fca5a5' : unsupplied ? '#fbbf24' : '#4ade80';
       ctx.fillText(label, gx, ly);
     }
   }
@@ -734,6 +767,7 @@ export function createRenderer(canvas) {
     zoomAt,
     recentre,
     camera,
+    frame: frameInfo,
     get scale() { return scale; },
     spriteCount: () => Object.keys(hulls).length + Object.keys(rings).length
       + Object.keys(towerBases).length + Object.keys(towerHeads).length,
